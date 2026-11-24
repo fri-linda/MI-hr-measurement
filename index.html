@@ -440,10 +440,13 @@ if (typeof document !== "undefined") (() => {
     plotDirty = true;
   }
 
+  // Each applyConstraints call replaces the previous one, so the torch and the camera
+  // lock (exposure, white balance, focus) are always sent together.
+  let camLock = {}, lockState = "none", lockedAt = null, lockInfo = "";
   async function setTorch(on) {
     if (!track) return false;
     try {
-      await track.applyConstraints({ advanced: [{ torch: on }] });
+      await track.applyConstraints({ advanced: [{ torch: on, ...camLock }] });
       torchOn = on;
     } catch (e) { torchOn = false; }
     text("torchBtn", "Flash: " + (torchOn ? "on" : "off"));
@@ -547,6 +550,43 @@ if (typeof document !== "undefined") (() => {
     schedule();
   }
 
+  // Like native apps (e.g. phyphox), switch off the automatic exposure once the finger is
+  // on the camera. Auto exposure would keep correcting exactly the small brightness
+  // changes caused by the pulse. The exposure time is also nudged so that the red
+  // channel is neither clipped at 255 nor too dark.
+  async function lockCamera(red) {
+    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+    const s = track && track.getSettings ? track.getSettings() : {};
+    const lock = {}, info = [];
+    const clamp = (v, range) => Math.min(range.max, Math.max(range.min, v));
+    if (caps.exposureMode && caps.exposureMode.includes("manual")) {
+      lock.exposureMode = "manual";
+      if (caps.exposureTime && s.exposureTime) {
+        let et = s.exposureTime;
+        if (red > 225) et *= 0.6; else if (red < 110) et *= 1.6;
+        lock.exposureTime = clamp(et, caps.exposureTime);
+        info.push("1/" + Math.round(10000 / lock.exposureTime) + " s");
+      }
+      if (caps.iso && s.iso) { lock.iso = s.iso; info.push("ISO " + Math.round(s.iso)); }
+    }
+    if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes("manual")) {
+      lock.whiteBalanceMode = "manual";
+      if (caps.colorTemperature && s.colorTemperature) lock.colorTemperature = s.colorTemperature;
+      info.push("WB");
+    }
+    if (caps.focusMode && caps.focusMode.includes("manual")) {
+      lock.focusMode = "manual";
+      if (caps.focusDistance && typeof s.focusDistance === "number") lock.focusDistance = s.focusDistance;
+      info.push("focus");
+    }
+    if (!Object.keys(lock).length) { lockInfo = "camera auto exposure (this phone does not allow locking it)"; return; }
+    try {
+      await track.applyConstraints({ advanced: [{ torch: torchOn, ...lock }] });
+      camLock = lock;
+      lockInfo = "camera locked: " + (info.join(", ") || "exposure");
+    } catch (e) { lockInfo = "camera lock failed: " + e.message; }
+  }
+
   function handleSample(ts, r, g, b) {
     const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
 
@@ -556,6 +596,13 @@ if (typeof document !== "undefined") (() => {
       if (fingerSince === null) fingerSince = ts;
       const left = SETTLE - (ts - fingerSince);
       if (left > 0) { setStatus(`Finger detected – keep still, starting in ${Math.ceil(left)} s`, "warn"); return; }
+      if (lockState === "none") {
+        lockState = "pending";
+        lockCamera(r).finally(() => { lockState = "done"; lockedAt = null; });
+      }
+      if (lockState === "pending") { setStatus("Finger detected – setting up the camera…", "warn"); return; }
+      if (lockedAt === null) lockedAt = ts;
+      if (ts - lockedAt < 1) { setStatus("Finger detected – keep still, starting…", "warn"); return; }
       state = "measuring"; base = ts; lastT = -1; proc.reset(); recordedAt = new Date();
       setStatus("Finger detected – keep still…", "warn");
     }
@@ -594,7 +641,8 @@ if (typeof document !== "undefined") (() => {
     text("sMean", s ? Math.round(s.meanBpm) : "--");
     text("sSdnn", s ? Math.round(s.sdnn) : "--");
     text("sRmssd", s ? Math.round(s.rmssd) : "--");
-    text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame`);
+    text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame` +
+                   (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
   }
 
   // The plot is redrawn at most once per screen refresh, independently of the camera
@@ -638,6 +686,7 @@ if (typeof document !== "undefined") (() => {
     }
     try {
       setStatus("Opening camera…");
+      camLock = {}; lockState = "none"; lockedAt = null; lockInfo = "";
       await openCamera($("camera").value && !$("camera").disabled ? $("camera").value : null);
       await listCameras();
     } catch (e) {
@@ -647,6 +696,7 @@ if (typeof document !== "undefined") (() => {
     }
     proc.reset(); plotDirty = true;
     state = "preview"; clock = null; fingerSince = null; lastUI = -1; lastMediaTime = -1;
+    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = "";
     text("startBtn", "Stop");
     $("dlSignal").disabled = $("dlBeats").disabled = true;
     ["bpm", "sMean", "sSdnn", "sRmssd"].forEach(id => text(id, "--"));
@@ -691,6 +741,8 @@ if (typeof document !== "undefined") (() => {
   $("torchBtn").onclick = () => setTorch(!torchOn);
   $("camera").onchange = async () => {
     if (state === "idle") return;
+    camLock = {}; lockInfo = "";
+    if (state === "preview") lockState = "none";
     try { await openCamera($("camera").value); if (useWorker) startWorker(); }
     catch (e) { showError("Could not switch camera: " + e.message); }
   };

@@ -102,6 +102,7 @@
       <div class="stat"><b id="sSdnn">--</b><span>SDNN (ms)</span></div>
       <div class="stat"><b id="sRmssd">--</b><span>RMSSD (ms)</span></div>
     </div>
+    <p class="note" id="engine" style="margin: 8px 0 0"></p>
   </div>
 
   <div class="card">
@@ -293,27 +294,123 @@ if (typeof document !== "undefined") (() => {
 
   // Where the browser supports it (Chrome, Android), camera frames are averaged in a
   // separate worker thread, so the page itself stays smooth. Each frame also carries the
-  // exact capture time from the camera.
+  // exact capture time from the camera. The frame is not converted to an image at all:
+  // only the raw YUV (or RGB) bytes of the central part are copied and averaged, and the
+  // averages are converted to RGB once (the conversion is linear, so this is exact).
   const WORKER_SRC = `
+    let buf = null, canvas = null, ctx = null;
+    const even = x => Math.max(0, Math.floor(x / 2) * 2);
+    function toRgb(y, u, v, full) {
+      u -= 128; v -= 128;
+      if (full) return [y + 1.402 * v, y - 0.344 * u - 0.714 * v, y + 1.772 * u];
+      y = 1.164 * (y - 16);
+      return [y + 1.596 * v, y - 0.392 * u - 0.813 * v, y + 2.017 * u];
+    }
+    async function average(frame) {
+      const vr = frame.visibleRect, fmt = frame.format;
+      const rect = { x: even(vr.x + vr.width / 4), y: even(vr.y + vr.height / 4),
+                     width: even(vr.width / 2), height: even(vr.height / 2) };
+      const w = rect.width, h = rect.height;
+      if (["NV12", "I420", "RGBA", "RGBX", "BGRA", "BGRX"].includes(fmt)) {
+        const size = frame.allocationSize({ rect });
+        if (!buf || buf.length < size) buf = new Uint8Array(size);
+        const L = await frame.copyTo(buf, { rect });
+        let s0 = 0, s1 = 0, s2 = 0, n = 0;
+        if (fmt === "NV12" || fmt === "I420") {
+          for (let r = 0; r < h; r += 2) {                    // every 2nd pixel is plenty
+            const o = L[0].offset + r * L[0].stride;
+            for (let c = 0; c < w; c += 2) { s0 += buf[o + c]; n++; }
+          }
+          let m = 0;
+          for (let r = 0; r < h / 2; r++) {
+            if (fmt === "NV12") {
+              const o = L[1].offset + r * L[1].stride;
+              for (let c = 0; c < w; c += 2) { s1 += buf[o + c]; s2 += buf[o + c + 1]; m++; }
+            } else {
+              const ou = L[1].offset + r * L[1].stride, ov = L[2].offset + r * L[2].stride;
+              for (let c = 0; c < w / 2; c++) { s1 += buf[ou + c]; s2 += buf[ov + c]; m++; }
+            }
+          }
+          const full = !!(frame.colorSpace && frame.colorSpace.fullRange);
+          return toRgb(s0 / n, s1 / m, s2 / m, full);
+        }
+        const bgr = fmt[0] === "B";
+        for (let r = 0; r < h; r += 2) {
+          const o = L[0].offset + r * L[0].stride;
+          for (let c = 0; c < w; c += 2) { const i = o + 4 * c; s0 += buf[i]; s1 += buf[i + 1]; s2 += buf[i + 2]; n++; }
+        }
+        return bgr ? [s2 / n, s1 / n, s0 / n] : [s0 / n, s1 / n, s2 / n];
+      }
+      // Any other pixel format: let the browser convert a 32x24 thumbnail
+      if (!canvas) { canvas = new OffscreenCanvas(32, 24); ctx = canvas.getContext("2d", { willReadFrequently: true }); }
+      ctx.drawImage(frame, rect.x, rect.y, w, h, 0, 0, 32, 24);
+      const d = ctx.getImageData(0, 0, 32, 24).data;
+      let r = 0, g = 0, b = 0;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+      return [r / 768, g / 768, b / 768];
+    }
     onmessage = async e => {
       const reader = e.data.readable.getReader();
-      const canvas = new OffscreenCanvas(32, 24), ctx = canvas.getContext("2d", { willReadFrequently: true });
       for (;;) {
         const { value: frame, done } = await reader.read();
         if (done) break;
-        const w = frame.displayWidth, h = frame.displayHeight;
-        ctx.drawImage(frame, w * 0.25, h * 0.25, w * 0.5, h * 0.5, 0, 0, 32, 24);
-        const ts = frame.timestamp / 1e6;
-        frame.close();
-        const d = ctx.getImageData(0, 0, 32, 24).data;
-        let r = 0, g = 0, b = 0;
-        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-        const n = d.length / 4;
-        postMessage({ ts, r: r / n, g: g / n, b: b / n });
+        const ts = frame.timestamp / 1e6, t0 = performance.now(), fmt = frame.format;
+        try {
+          const [r, g, b] = await average(frame);
+          postMessage({ ts, r, g, b, ms: performance.now() - t0, fmt });
+        } catch (err) { postMessage({ error: String(err) }); }
+        finally { frame.close(); }
       }
     };`;
   const useWorker = typeof MediaStreamTrackProcessor === "function" && typeof OffscreenCanvas === "function";
   let worker = null, workerTrack = null;
+
+  // Main-thread fallback (Safari, Firefox): the GPU shrinks the frame to 32x24 with WebGL
+  // and only those pixels are read back. Plain 2D canvas is the last resort.
+  const GW = 32, GH = 24;
+  function makeGL() {
+    try {
+      const c = document.createElement("canvas"); c.width = GW; c.height = GH;
+      const gl = c.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false,
+                                          preserveDrawingBuffer: false, powerPreference: "low-power" });
+      if (!gl) return null;
+      const shader = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
+      const prog = gl.createProgram();
+      // the quad samples only the central 50 % of the camera image
+      gl.attachShader(prog, shader(gl.VERTEX_SHADER,
+        "attribute vec2 p; varying vec2 uv; void main() { uv = 0.25 + (p * 0.5 + 0.5) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }"));
+      gl.attachShader(prog, shader(gl.FRAGMENT_SHADER,
+        "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main() { gl_FragColor = texture2D(tex, uv); }"));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
+      gl.useProgram(prog);
+      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
+      const loc = gl.getAttribLocation(prog, "p");
+      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+      gl.viewport(0, 0, GW, GH);
+      const px = new Uint8Array(GW * GH * 4);
+      return () => {
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+        gl.readPixels(0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
+        const n = GW * GH;
+        return [r / n, g / n, b / n];
+      };
+    } catch (e) { return null; }
+  }
+  let glGrab = null, mode = "", frameMs = 0, frameFmt = "";
+  function noteTiming(ms, fmt) {
+    frameMs = frameMs ? 0.95 * frameMs + 0.05 * ms : ms;
+    if (fmt) frameFmt = fmt;
+  }
 
   const SETTLE = 2;              // seconds of steady finger contact before measuring starts
   const proc = new PulseProcessor();
@@ -407,13 +504,22 @@ if (typeof document !== "undefined") (() => {
   }
 
   function handleFrame(ts) {
-    const vw = video.videoWidth, vh = video.videoHeight;
-    // central 50 % of the image
-    gctx.drawImage(video, vw * 0.25, vh * 0.25, vw * 0.5, vh * 0.5, 0, 0, grab.width, grab.height);
-    const d = gctx.getImageData(0, 0, grab.width, grab.height).data;
-    let r = 0, g = 0, b = 0; const n = d.length / 4;
-    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-    handleSample(ts, r / n, g / n, b / n);
+    const t0 = performance.now();
+    let rgb = null;
+    if (mode === "webgl") {
+      try { rgb = glGrab(); } catch (e) { mode = "2d"; }      // e.g. the GPU refused the video
+    }
+    if (!rgb) {
+      const vw = video.videoWidth, vh = video.videoHeight;
+      // central 50 % of the image
+      gctx.drawImage(video, vw * 0.25, vh * 0.25, vw * 0.5, vh * 0.5, 0, 0, grab.width, grab.height);
+      const d = gctx.getImageData(0, 0, grab.width, grab.height).data;
+      let r = 0, g = 0, b = 0; const n = d.length / 4;
+      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+      rgb = [r / n, g / n, b / n];
+    }
+    noteTiming(performance.now() - t0);
+    handleSample(ts, rgb[0], rgb[1], rgb[2]);
   }
 
   function startWorker() {
@@ -423,13 +529,23 @@ if (typeof document !== "undefined") (() => {
     worker = new Worker(url); URL.revokeObjectURL(url);
     const readable = new MediaStreamTrackProcessor({ track: workerTrack }).readable;
     worker.postMessage({ readable }, [readable]);
-    worker.onmessage = e => { if (state !== "idle") handleSample(e.data.ts, e.data.r, e.data.g, e.data.b); };
+    worker.onmessage = e => {
+      const m = e.data;
+      if (m.error) { showError("Frame processing failed: " + m.error); return; }
+      noteTiming(m.ms, m.fmt);
+      if (state !== "idle") handleSample(m.ts, m.r, m.g, m.b);
+    };
   }
   function stopWorker() {
     if (worker) { worker.terminate(); worker = null; }
     if (workerTrack) { workerTrack.stop(); workerTrack = null; }
   }
-  function startCapture() { if (useWorker) startWorker(); else schedule(); }
+  function startCapture() {
+    if (useWorker) { mode = "worker"; startWorker(); return; }
+    if (!glGrab) glGrab = makeGL();
+    mode = glGrab ? "webgl" : "2d";
+    schedule();
+  }
 
   function handleSample(ts, r, g, b) {
     const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
@@ -478,6 +594,7 @@ if (typeof document !== "undefined") (() => {
     text("sMean", s ? Math.round(s.meanBpm) : "--");
     text("sSdnn", s ? Math.round(s.sdnn) : "--");
     text("sRmssd", s ? Math.round(s.rmssd) : "--");
+    text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame`);
   }
 
   // The plot is redrawn at most once per screen refresh, independently of the camera

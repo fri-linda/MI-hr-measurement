@@ -90,6 +90,9 @@
       <label for="camera">Camera</label>
       <select id="camera" disabled><option>default</option></select>
     </div>
+    <div class="row" style="margin-top:10px">
+      <label><input type="checkbox" id="lockExp"> Lock camera exposure (experimental)</label>
+    </div>
     <p class="err" id="error" hidden></p>
   </div>
 
@@ -552,9 +555,9 @@ if (typeof document !== "undefined") (() => {
 
   // Like native apps (e.g. phyphox), switch off the automatic exposure once the finger is
   // on the camera. Auto exposure would keep correcting exactly the small brightness
-  // changes caused by the pulse. The exposure time is also nudged so that the red
-  // channel is neither clipped at 255 nor too dark.
-  async function lockCamera(red) {
+  // changes caused by the pulse. Only the current values are frozen; the exposure time
+  // is capped at 1/30 s so that the camera keeps 30 frames per second.
+  async function lockCamera() {
     const caps = track && track.getCapabilities ? track.getCapabilities() : {};
     const s = track && track.getSettings ? track.getSettings() : {};
     const lock = {}, info = [];
@@ -562,9 +565,7 @@ if (typeof document !== "undefined") (() => {
     if (caps.exposureMode && caps.exposureMode.includes("manual")) {
       lock.exposureMode = "manual";
       if (caps.exposureTime && s.exposureTime) {
-        let et = s.exposureTime;
-        if (red > 225) et *= 0.6; else if (red < 110) et *= 1.6;
-        lock.exposureTime = clamp(et, caps.exposureTime);
+        lock.exposureTime = clamp(Math.min(s.exposureTime, 333), caps.exposureTime);   // 333 = 1/30 s
         info.push("1/" + Math.round(10000 / lock.exposureTime) + " s");
       }
       if (caps.iso && s.iso) { lock.iso = s.iso; info.push("ISO " + Math.round(s.iso)); }
@@ -587,21 +588,53 @@ if (typeof document !== "undefined") (() => {
     } catch (e) { lockInfo = "camera lock failed: " + e.message; }
   }
 
+  // Back to automatic camera settings (used when the finger is lost after locking)
+  async function unlockCamera(reason) {
+    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
+    const auto = {};
+    for (const k of ["exposureMode", "whiteBalanceMode", "focusMode"])
+      if (camLock[k] && caps[k] && caps[k].includes("continuous")) auto[k] = "continuous";
+    camLock = {};
+    try { await track.applyConstraints({ advanced: [{ torch: torchOn, ...auto }] }); } catch (e) { /* ignore */ }
+    lockInfo = reason;
+  }
+
+  let lastEngine = -1, rgbNow = [0, 0, 0];
+  function showEngine(ts) {
+    if (ts - lastEngine < 0.5) return;
+    lastEngine = ts;
+    const [r, g, b] = rgbNow.map(Math.round);
+    text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame, ` +
+                   `R ${r} G ${g} B ${b}` + (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
+  }
+
   function handleSample(ts, r, g, b) {
     const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
+    rgbNow = [r, g, b];
+    showEngine(ts);
 
     if (state === "preview") {
       // Wait until the finger has covered the camera steadily, then start the clock
-      if (!finger) { fingerSince = null; setStatus("Cover the camera and flash with your fingertip", "bad"); return; }
+      if (!finger) {
+        fingerSince = null;
+        setStatus("Cover the camera and flash with your fingertip", "bad");
+        if (lockState === "done" && Object.keys(camLock).length) {
+          lockState = "off";            // do not try again during this measurement
+          unlockCamera("lock undone: the finger was not visible with locked exposure");
+        }
+        return;
+      }
       if (fingerSince === null) fingerSince = ts;
       const left = SETTLE - (ts - fingerSince);
       if (left > 0) { setStatus(`Finger detected – keep still, starting in ${Math.ceil(left)} s`, "warn"); return; }
       if (lockState === "none") {
-        lockState = "pending";
-        lockCamera(r).finally(() => { lockState = "done"; lockedAt = null; });
+        if ($("lockExp").checked) {
+          lockState = "pending";
+          lockCamera().finally(() => { lockState = "done"; lockedAt = null; });
+        } else { lockState = "off"; lockedAt = ts - 1; }
       }
       if (lockState === "pending") { setStatus("Finger detected – setting up the camera…", "warn"); return; }
-      if (lockedAt === null) lockedAt = ts;
+      if (lockedAt === null) lockedAt = ts;      // after locking, give the camera 1 s
       if (ts - lockedAt < 1) { setStatus("Finger detected – keep still, starting…", "warn"); return; }
       state = "measuring"; base = ts; lastT = -1; proc.reset(); recordedAt = new Date();
       setStatus("Finger detected – keep still…", "warn");
@@ -641,8 +674,6 @@ if (typeof document !== "undefined") (() => {
     text("sMean", s ? Math.round(s.meanBpm) : "--");
     text("sSdnn", s ? Math.round(s.sdnn) : "--");
     text("sRmssd", s ? Math.round(s.rmssd) : "--");
-    text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame` +
-                   (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
   }
 
   // The plot is redrawn at most once per screen refresh, independently of the camera
@@ -696,7 +727,7 @@ if (typeof document !== "undefined") (() => {
     }
     proc.reset(); plotDirty = true;
     state = "preview"; clock = null; fingerSince = null; lastUI = -1; lastMediaTime = -1;
-    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = "";
+    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = ""; lastEngine = -Infinity;
     text("startBtn", "Stop");
     $("dlSignal").disabled = $("dlBeats").disabled = true;
     ["bpm", "sMean", "sSdnn", "sRmssd"].forEach(id => text(id, "--"));

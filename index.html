@@ -30,7 +30,7 @@
   .heart { width: 34px; height: 34px; color: var(--accent); transition: transform .12s; }
   .heart.beat { transform: scale(1.3); }
   .status { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); }
-  .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); }
+  .dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--accent); }
   canvas#plot { width: 100%; height: 160px; display: block; background: transparent; }
   .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
@@ -42,7 +42,8 @@
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; flex: 1; }
   button:disabled { opacity: .45; }
   label { font-size: .9rem; color: var(--muted); }
-  .preview { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 2px solid var(--line);
+  .preview { width: 76px; height: 76px; aspect-ratio: 1; flex: 0 0 auto; border-radius: 50%; object-fit: cover;
+             border: 2px solid var(--line);
              background: #000; margin-left: auto; }
   details { font-size: .9rem; color: var(--muted); }
   details li { margin: 4px 0; }
@@ -114,10 +115,10 @@
   <details class="card">
     <summary>How to measure</summary>
     <ol>
-      <li>Press <b>Start</b> and allow camera access.</li>
+      <li>Press <b>Start</b> and allow camera access. The camera preview and the flash turn on.</li>
       <li>Cover the <b>rear camera and the flash</b> with your fingertip. The preview should turn evenly red.</li>
       <li>Press lightly. Pressing hard pushes the blood out and the signal disappears.</li>
-      <li>Rest your hand and the phone on a table and keep still.</li>
+      <li>Rest your hand and the phone on a table and keep still. Measuring starts by itself after the finger has been still for 2 seconds.</li>
       <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's flashlight through your finger.</li>
     </ol>
     <p class="note">For teaching purposes only. Not a medical device.</p>
@@ -285,18 +286,62 @@ class PulseProcessor {
 if (typeof document !== "undefined") (() => {
   const $ = id => document.getElementById(id);
   const video = $("video"), plot = $("plot"), pctx = plot.getContext("2d");
-  const grab = document.createElement("canvas"); grab.width = 48; grab.height = 36;
-  const gctx = grab.getContext("2d", { willReadFrequently: true });
+  // Small canvas for averaging the image. Without willReadFrequently it stays on the GPU,
+  // so drawImage scales the camera frame there and only 32x24 pixels are read back.
+  const grab = document.createElement("canvas"); grab.width = 32; grab.height = 24;
+  const gctx = grab.getContext("2d", { alpha: false });
 
+  // Where the browser supports it (Chrome, Android), camera frames are averaged in a
+  // separate worker thread, so the page itself stays smooth. Each frame also carries the
+  // exact capture time from the camera.
+  const WORKER_SRC = `
+    onmessage = async e => {
+      const reader = e.data.readable.getReader();
+      const canvas = new OffscreenCanvas(32, 24), ctx = canvas.getContext("2d", { willReadFrequently: true });
+      for (;;) {
+        const { value: frame, done } = await reader.read();
+        if (done) break;
+        const w = frame.displayWidth, h = frame.displayHeight;
+        ctx.drawImage(frame, w * 0.25, h * 0.25, w * 0.5, h * 0.5, 0, 0, 32, 24);
+        const ts = frame.timestamp / 1e6;
+        frame.close();
+        const d = ctx.getImageData(0, 0, 32, 24).data;
+        let r = 0, g = 0, b = 0;
+        for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+        const n = d.length / 4;
+        postMessage({ ts, r: r / n, g: g / n, b: b / n });
+      }
+    };`;
+  const useWorker = typeof MediaStreamTrackProcessor === "function" && typeof OffscreenCanvas === "function";
+  let worker = null, workerTrack = null;
+
+  const SETTLE = 2;              // seconds of steady finger contact before measuring starts
   const proc = new PulseProcessor();
-  let stream = null, track = null, running = false, t0 = 0, torchOn = false;
-  let wakeLock = null, recordedAt = null;
+  let stream = null, track = null, torchOn = false, wakeLock = null, recordedAt = null;
+  let state = "idle";            // idle -> preview (waiting for the finger) -> measuring
+  let clock = null, base = 0, lastT = -1, fingerSince = null, lastMediaTime = -1;
+  let colors = {}, plotW = 0, plotH = 0, plotDirty = false, lastUI = -1;
 
-  function setStatus(text, level) {
-    $("status").textContent = text;
-    $("dot").className = "dot" + (level ? " " + level : "");
+  const text = (id, value) => { const e = $(id); const v = String(value); if (e.textContent !== v) e.textContent = v; };
+  function setStatus(msg, level) {
+    text("status", msg);
+    const cls = "dot" + (level ? " " + level : "");
+    if ($("dot").className !== cls) $("dot").className = cls;
   }
   function showError(msg) { const e = $("error"); e.textContent = msg; e.hidden = !msg; }
+
+  function readColors() {
+    const css = getComputedStyle(document.documentElement);
+    colors = { line: css.getPropertyValue("--line"), accent: css.getPropertyValue("--accent"),
+               ok: css.getPropertyValue("--ok"), warn: css.getPropertyValue("--warn") };
+  }
+  function resizePlot() {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);    // 2x is sharp enough for a line plot
+    plotW = plot.clientWidth; plotH = plot.clientHeight;
+    plot.width = Math.round(plotW * dpr); plot.height = Math.round(plotH * dpr);
+    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    plotDirty = true;
+  }
 
   async function setTorch(on) {
     if (!track) return false;
@@ -304,7 +349,7 @@ if (typeof document !== "undefined") (() => {
       await track.applyConstraints({ advanced: [{ torch: on }] });
       torchOn = on;
     } catch (e) { torchOn = false; }
-    $("torchBtn").textContent = "Flash: " + (torchOn ? "on" : "off");
+    text("torchBtn", "Flash: " + (torchOn ? "on" : "off"));
     return torchOn;
   }
 
@@ -339,58 +384,110 @@ if (typeof document !== "undefined") (() => {
     if (!ok) setStatus("Flash not available – try another camera or an external light", "warn");
   }
 
-  function readFrame(now) {
-    if (!running) return;
+  // Time of the frame in seconds. The capture time from the camera is used when the
+  // browser provides it: the time the page happens to process the frame jitters with
+  // load, and that jitter distorts the beat-to-beat intervals.
+  function frameTime(now, md) {
+    if (!clock) clock = md && typeof md.captureTime === "number" ? "capture"
+                      : md && typeof md.mediaTime === "number" && md.mediaTime > 0 ? "media" : "now";
+    if (clock === "capture" && typeof md?.captureTime === "number") return md.captureTime / 1000;
+    if (clock === "media" && typeof md?.mediaTime === "number") return md.mediaTime;
+    return now / 1000;
+  }
+
+  function readFrame(now, md) {
+    if (state === "idle") return;
     if (video.readyState >= 2) {
-      const vw = video.videoWidth, vh = video.videoHeight;
-      // central 50 % of the image
-      gctx.drawImage(video, vw * 0.25, vh * 0.25, vw * 0.5, vh * 0.5, 0, 0, grab.width, grab.height);
-      const d = gctx.getImageData(0, 0, grab.width, grab.height).data;
-      let r = 0, g = 0, b = 0; const n = d.length / 4;
-      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-      const t = (now - t0) / 1000;
-      const beat = proc.add(t, r / n, g / n, b / n);
-      if (beat && beat.valid) {
-        const h = $("heart"); h.classList.add("beat"); setTimeout(() => h.classList.remove("beat"), 120);
-      }
-      updateUI(t);
-      const dur = +$("duration").value;
-      if (dur && t >= dur) { stop(true); return; }
+      // Without requestVideoFrameCallback the same frame may come twice: skip it
+      const fresh = md || video.currentTime !== lastMediaTime;
+      lastMediaTime = video.currentTime;
+      if (fresh) handleFrame(frameTime(now, md));
     }
-    schedule();
+    if (state !== "idle") schedule();
+  }
+
+  function handleFrame(ts) {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    // central 50 % of the image
+    gctx.drawImage(video, vw * 0.25, vh * 0.25, vw * 0.5, vh * 0.5, 0, 0, grab.width, grab.height);
+    const d = gctx.getImageData(0, 0, grab.width, grab.height).data;
+    let r = 0, g = 0, b = 0; const n = d.length / 4;
+    for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+    handleSample(ts, r / n, g / n, b / n);
+  }
+
+  function startWorker() {
+    stopWorker();
+    workerTrack = track.clone();          // the preview keeps the original track
+    const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" }));
+    worker = new Worker(url); URL.revokeObjectURL(url);
+    const readable = new MediaStreamTrackProcessor({ track: workerTrack }).readable;
+    worker.postMessage({ readable }, [readable]);
+    worker.onmessage = e => { if (state !== "idle") handleSample(e.data.ts, e.data.r, e.data.g, e.data.b); };
+  }
+  function stopWorker() {
+    if (worker) { worker.terminate(); worker = null; }
+    if (workerTrack) { workerTrack.stop(); workerTrack = null; }
+  }
+  function startCapture() { if (useWorker) startWorker(); else schedule(); }
+
+  function handleSample(ts, r, g, b) {
+    const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
+
+    if (state === "preview") {
+      // Wait until the finger has covered the camera steadily, then start the clock
+      if (!finger) { fingerSince = null; setStatus("Cover the camera and flash with your fingertip", "bad"); return; }
+      if (fingerSince === null) fingerSince = ts;
+      const left = SETTLE - (ts - fingerSince);
+      if (left > 0) { setStatus(`Finger detected – keep still, starting in ${Math.ceil(left)} s`, "warn"); return; }
+      state = "measuring"; base = ts; lastT = -1; proc.reset(); recordedAt = new Date();
+      setStatus("Finger detected – keep still…", "warn");
+    }
+
+    const t = ts - base;
+    if (t <= lastT) return;          // out-of-order or repeated timestamp
+    lastT = t;
+    const beat = proc.add(t, r, g, b);
+    if (beat && beat.valid) {
+      const h = $("heart"); h.classList.add("beat"); setTimeout(() => h.classList.remove("beat"), 120);
+    }
+    plotDirty = true;
+    if (t - lastUI >= 0.25) { lastUI = t; updateUI(t); }
+    const dur = +$("duration").value;
+    if (dur && t >= dur) stop(true);
   }
 
   function schedule() {
-    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(() => readFrame(performance.now()));
-    else requestAnimationFrame(readFrame);
+    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(readFrame);
+    else requestAnimationFrame(now => readFrame(now, null));
   }
 
-  let lastUI = 0;
   function updateUI(t) {
-    drawPlot();
-    if (t - lastUI < 0.25) return;
-    lastUI = t;
     const n = proc.t.length, finger = n && proc.finger[n - 1];
     const bpm = proc.currentBPM();
-    const recent = proc.beats.filter(x => x.t > t - 5 && x.valid).length;
+    let recent = 0, valid = 0;
+    for (const x of proc.beats) if (x.valid) { valid++; if (x.t > t - 5) recent++; }
     if (!finger) setStatus("Cover the camera and flash with your fingertip", "bad");
     else if (recent < 2) setStatus("Finger detected – keep still…", "warn");
     else setStatus("Measuring", "ok");
-    $("bpm").textContent = bpm && finger && recent >= 2 ? Math.round(bpm) : "--";
-    $("sTime").textContent = Math.floor(t);
-    $("sBeats").textContent = proc.beats.filter(x => x.valid).length;
-    $("sFps").textContent = Math.round(proc.fps());
+    text("bpm", bpm && finger && recent >= 2 ? Math.round(bpm) : "--");
+    text("sTime", Math.floor(t));
+    text("sBeats", valid);
+    text("sFps", Math.round(proc.fps()));
     const s = proc.summary();
-    $("sMean").textContent = s ? Math.round(s.meanBpm) : "--";
-    $("sSdnn").textContent = s ? Math.round(s.sdnn) : "--";
-    $("sRmssd").textContent = s ? Math.round(s.rmssd) : "--";
+    text("sMean", s ? Math.round(s.meanBpm) : "--");
+    text("sSdnn", s ? Math.round(s.sdnn) : "--");
+    text("sRmssd", s ? Math.round(s.rmssd) : "--");
+  }
+
+  // The plot is redrawn at most once per screen refresh, independently of the camera
+  function plotLoop() {
+    if (plotDirty) { plotDirty = false; drawPlot(); }
+    requestAnimationFrame(plotLoop);
   }
 
   function drawPlot() {
-    const dpr = window.devicePixelRatio || 1;
-    const W = plot.clientWidth, H = plot.clientHeight;
-    if (plot.width !== W * dpr) { plot.width = W * dpr; plot.height = H * dpr; }
-    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const W = plotW, H = plotH;
     pctx.clearRect(0, 0, W, H);
     const n = proc.t.length; if (n < 2) return;
     const span = 6, tEnd = proc.t[n - 1], tStart = tEnd - span;
@@ -401,16 +498,17 @@ if (typeof document !== "undefined") (() => {
     const pad = 12;
     const X = tt => (tt - tStart) / span * W;
     const Y = v => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
-    const css = getComputedStyle(document.documentElement);
-    pctx.strokeStyle = css.getPropertyValue("--line"); pctx.lineWidth = 1;
-    for (let s = Math.ceil(tStart); s < tEnd; s++) { pctx.beginPath(); pctx.moveTo(X(s), 0); pctx.lineTo(X(s), H); pctx.stroke(); }
-    pctx.strokeStyle = css.getPropertyValue("--accent"); pctx.lineWidth = 2; pctx.beginPath();
+    pctx.strokeStyle = colors.line; pctx.lineWidth = 1; pctx.beginPath();
+    for (let s = Math.ceil(tStart); s < tEnd; s++) { pctx.moveTo(X(s), 0); pctx.lineTo(X(s), H); }
+    pctx.stroke();
+    pctx.strokeStyle = colors.accent; pctx.lineWidth = 2; pctx.beginPath();
     for (let i = a; i < n; i++) { const x = X(proc.t[i]), y = Y(proc.sig[i]); i === a ? pctx.moveTo(x, y) : pctx.lineTo(x, y); }
     pctx.stroke();
-    for (const bt of proc.beats) {
-      if (bt.t < tStart) continue;
+    for (let k = proc.beats.length - 1; k >= 0; k--) {     // only the beats on screen
+      const bt = proc.beats[k];
+      if (bt.t < tStart) break;
       const i = Math.min(n - 1, proc.idxAt(bt.t));
-      pctx.fillStyle = bt.valid ? css.getPropertyValue("--ok") : css.getPropertyValue("--warn");
+      pctx.fillStyle = bt.valid ? colors.ok : colors.warn;
       pctx.beginPath(); pctx.arc(X(bt.t), Y(proc.sig[i]), 4, 0, 2 * Math.PI); pctx.fill();
     }
   }
@@ -430,32 +528,38 @@ if (typeof document !== "undefined") (() => {
       setStatus("Camera not available", "bad");
       return;
     }
-    proc.reset(); recordedAt = new Date();
-    running = true; t0 = performance.now(); lastUI = -1;
-    $("startBtn").textContent = "Stop";
+    proc.reset(); plotDirty = true;
+    state = "preview"; clock = null; fingerSince = null; lastUI = -1; lastMediaTime = -1;
+    text("startBtn", "Stop");
     $("dlSignal").disabled = $("dlBeats").disabled = true;
+    ["bpm", "sMean", "sSdnn", "sRmssd"].forEach(id => text(id, "--"));
+    ["sTime", "sBeats", "sFps"].forEach(id => text(id, 0));
+    setStatus("Cover the camera and flash with your fingertip", "bad");
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { /* optional */ }
-    schedule();
+    startCapture();
   }
 
   async function stop(finished) {
-    running = false;
+    const measured = state === "measuring";
+    state = "idle";
+    stopWorker();
     await setTorch(false);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; track = null;
     $("torchBtn").disabled = true;
     try { await wakeLock?.release(); } catch (e) { /* ignore */ }
-    $("startBtn").textContent = "Start";
-    const has = proc.t.length > 0;
+    text("startBtn", "Start");
+    const has = measured && proc.t.length > 0;
     $("dlSignal").disabled = $("dlBeats").disabled = !has;
-    updateUI(proc.t.length ? proc.t[proc.t.length - 1] : 0);
+    if (has) updateUI(proc.t[proc.t.length - 1]);
+    plotDirty = true;
     setStatus(finished ? "Done – download the data below" : "Stopped", finished ? "ok" : "");
     const s = proc.summary();
-    $("bpm").textContent = s ? Math.round(s.meanBpm) : "--";
+    text("bpm", s ? Math.round(s.meanBpm) : "--");
   }
 
-  function download(name, text) {
-    const blob = new Blob([text], { type: "text/csv" });
+  function download(name, csv) {
+    const blob = new Blob([csv], { type: "text/csv" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
@@ -466,17 +570,19 @@ if (typeof document !== "undefined") (() => {
     return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
   }
 
-  $("startBtn").onclick = () => running ? stop(false) : start();
+  $("startBtn").onclick = () => state === "idle" ? start() : stop(false);
   $("torchBtn").onclick = () => setTorch(!torchOn);
   $("camera").onchange = async () => {
-    if (!running) return;
-    try { await openCamera($("camera").value); } catch (e) { showError("Could not switch camera: " + e.message); }
+    if (state === "idle") return;
+    try { await openCamera($("camera").value); if (useWorker) startWorker(); }
+    catch (e) { showError("Could not switch camera: " + e.message); }
   };
   $("dlSignal").onclick = () => download(`ppg-signal-${stamp()}.csv`, proc.signalCSV());
   $("dlBeats").onclick = () => download(`ppg-beats-${stamp()}.csv`, proc.beatsCSV());
-  document.addEventListener("visibilitychange", () => { if (document.hidden && running) stop(false); });
-  window.addEventListener("resize", drawPlot);
-  drawPlot();
+  document.addEventListener("visibilitychange", () => { if (document.hidden && state !== "idle") stop(false); });
+  window.addEventListener("resize", resizePlot);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); plotDirty = true; });
+  readColors(); resizePlot(); plotLoop();
 })();
 
 if (typeof module !== "undefined") module.exports = { PulseProcessor };

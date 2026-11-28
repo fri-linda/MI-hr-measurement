@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Camera Pulse – PPG recorder</title>
+<title>Camera Pulse – heart rate from a video</title>
 <link rel="icon" href="data:,">
 <style>
   :root {
@@ -24,20 +24,9 @@
   .sub { color: var(--muted); font-size: .9rem; margin: 0 0 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
           padding: 14px; margin-bottom: 12px; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .recorder { display: flex; flex-direction: column; align-items: center; gap: 10px; }
-  .cam { position: relative; width: 184px; height: 184px; }
-  .cam video { position: absolute; left: 12px; top: 12px; width: 160px; height: 160px; border-radius: 50%;
-               object-fit: cover; background: #2a2f38; }
-  .cam svg { position: absolute; inset: 0; transform: rotate(-90deg); }
-  .cam circle { fill: none; stroke-width: 6; }
-  .cam .ring-bg { stroke: var(--line); }
-  .cam .ring { stroke: var(--accent); stroke-linecap: round; }
-  .cam .overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
-                  color: #fff; font-size: 2.3rem; font-weight: 700; font-variant-numeric: tabular-nums;
-                  text-shadow: 0 1px 5px rgba(0,0,0,.8); pointer-events: none; }
-  .cam .overlay small { display: block; font-size: .8rem; font-weight: 500; }
-  .status { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); }
+  ol { margin: 0; padding-left: 20px; font-size: .92rem; }
+  ol li { margin: 5px 0; }
+  .status { display: flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); margin-top: 10px; }
   .dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--accent); }
   .bpm { font-size: 3.2rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
@@ -49,64 +38,40 @@
   .stat { background: var(--bg); border-radius: 10px; padding: 8px; text-align: center; }
   .stat b { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
   .stat span { font-size: .75rem; color: var(--muted); }
-  button, select { font: inherit; border-radius: 10px; border: 1px solid var(--line);
-                   background: var(--card); color: var(--text); padding: 10px 14px; }
-  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; flex: 1; }
-  button:disabled { opacity: .45; }
+  button { font: inherit; border-radius: 10px; border: 1px solid var(--line);
+           background: var(--card); color: var(--text); padding: 10px 14px; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; width: 100%; }
   .tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
   .tabs button { padding: 7px 11px; font-size: .85rem; }
   .tabs button.on { background: var(--accent-soft); border-color: var(--accent); }
   pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
         font-size: .72rem; line-height: 1.45; overflow-x: auto; white-space: pre; margin: 0 0 8px; }
-  label { font-size: .9rem; color: var(--muted); }
-  details { font-size: .9rem; color: var(--muted); }
-  details li { margin: 4px 0; }
   .note { font-size: .8rem; color: var(--muted); }
-  .err { color: var(--accent); font-size: .9rem; }
+  .err { color: var(--accent); font-size: .9rem; margin: 10px 0 0; }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main>
   <h1>Camera Pulse</h1>
-  <p class="sub">Records the pulse wave (PPG) through your fingertip with the phone camera and flash, then
-    evaluates it. Data stays on this device.</p>
+  <p class="sub">Heart rate from a short video of your fingertip (photoplethysmography, PPG).
+    The video is evaluated in this browser and is not uploaded anywhere.</p>
 
   <div class="card">
-    <div class="recorder">
-      <div class="cam">
-        <video id="video" playsinline muted autoplay></video>
-        <svg viewBox="0 0 184 184" width="184" height="184" aria-hidden="true">
-          <circle class="ring-bg" cx="92" cy="92" r="88"/>
-          <circle class="ring" id="ring" cx="92" cy="92" r="88" stroke-dasharray="552.9" stroke-dashoffset="552.9"/>
-        </svg>
-        <div class="overlay"><div><span id="count"></span><small id="countLabel"></small></div></div>
-      </div>
-      <div class="status"><span class="dot" id="dot"></span><span id="status">Press Start</span></div>
-    </div>
+    <h2>1. Record a video</h2>
+    <ol>
+      <li>Open the phone's <b>Camera</b> app, switch to <b>video</b> and turn the <b>light (flash) on</b>.</li>
+      <li>Cover the <b>rear camera and the flash</b> with your fingertip. Press lightly; pressing hard
+        pushes the blood out and the pulse disappears.</li>
+      <li>Rest your hand and the phone on a table, keep still and record <b>20 to 30 seconds</b>.</li>
+    </ol>
   </div>
 
   <div class="card">
-    <div class="row" style="margin-bottom:10px">
-      <button class="primary" id="startBtn">Start</button>
-      <button id="torchBtn" disabled>Flash: off</button>
-    </div>
-    <div class="row" style="margin-bottom:10px">
-      <button id="videoBtn" style="flex:1">Analyze a video</button>
-      <input type="file" id="videoFile" accept="video/*" hidden>
-    </div>
-    <div class="row">
-      <label for="duration">Duration</label>
-      <select id="duration">
-        <option value="15" selected>15 s</option>
-        <option value="30">30 s</option>
-      </select>
-      <label for="camera">Camera</label>
-      <select id="camera" disabled><option>default</option></select>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <label><input type="checkbox" id="lockExp"> Lock camera exposure (experimental)</label>
-    </div>
+    <h2>2. Analyze it</h2>
+    <button class="primary" id="analyzeBtn">Choose the video</button>
+    <input type="file" id="videoFile" accept="video/*" hidden>
+    <div class="status"><span class="dot" id="dot"></span><span id="status">The evaluation takes about as long as the video.</span></div>
     <p class="err" id="error" hidden></p>
   </div>
 
@@ -142,41 +107,7 @@
     <button id="copyBtn">Copy</button>
   </div>
 
-  <div class="card">
-    <div class="row">
-      <button id="dlSignal" disabled>Download signal CSV</button>
-      <button id="dlBeats" disabled>Download beats CSV</button>
-    </div>
-    <p class="note">Signal CSV: the recording resampled to a fixed rate (time, mean red/green/blue,
-      filtered pulse wave). Beats CSV: time of each detected beat, interval to the previous beat (RR) and BPM.</p>
-  </div>
-
-  <details class="card">
-    <summary>How to measure</summary>
-    <ol>
-      <li>Press <b>Start</b> and allow camera access. The camera preview and the flash turn on.</li>
-      <li>Cover the <b>rear camera and the flash</b> with your fingertip. The preview should turn evenly red.</li>
-      <li>Press lightly. Pressing hard pushes the blood out and the signal disappears.</li>
-      <li>Rest your hand and the phone on a table and keep still. Recording starts by itself after the
-        finger has been still for 2 seconds. The circle shows the camera and the time left.</li>
-      <li>The page records a short video and evaluates it afterwards; the result appears below.</li>
-      <li><b>Analyze a video</b>: record 20 to 30 s with the phone's camera app instead (video mode,
-        flash on, finger on the camera) and choose the file. The first second with a steady finger
-        is skipped automatically.</li>
-      <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's
-        flashlight through your finger.</li>
-    </ol>
-    <p class="note"><label>Frame reading (for testing):
-      <select id="reader">
-        <option value="auto" selected>automatic</option>
-        <option value="webgl">worker, WebGL</option>
-        <option value="canvas">worker, canvas</option>
-        <option value="copy">worker, raw bytes</option>
-        <option value="main">page, WebGL</option>
-      </select></label></p>
-    <p class="note" id="engine"></p>
-    <p class="note">For teaching purposes only. Not a medical device.</p>
-  </details>
+  <p class="note">For teaching purposes only (Medical Informatics, FRI UNIZA). Not a medical device.</p>
 </main>
 
 <script>
@@ -342,217 +273,8 @@ class PulseProcessor {
 /* ===== Browser part ===== */
 if (typeof document !== "undefined") (() => {
   const $ = id => document.getElementById(id);
-  const video = $("video");
-  // Small canvas for averaging the image. Without willReadFrequently it stays on the GPU,
-  // so drawImage scales the camera frame there and only 32x24 pixels are read back.
-  const grab = document.createElement("canvas"); grab.width = 32; grab.height = 24;
-  const gctx = grab.getContext("2d", { alpha: false });
-
-  // Where the browser supports it (Chrome, Android), camera frames are averaged in a
-  // separate worker thread, so the page itself stays smooth. Each frame also carries the
-  // exact capture time from the camera. The frame is not converted to an image at all:
-  // only the raw YUV (or RGB) bytes of the central part are copied and averaged, and the
-  // averages are converted to RGB once (the conversion is linear, so this is exact).
-  const WORKER_SRC = `
-    let buf = null, canvas = null, ctx = null;
-    const even = x => Math.max(0, Math.floor(x / 2) * 2);
-    function toRgb(y, u, v, full) {
-      u -= 128; v -= 128;
-      if (full) return [y + 1.402 * v, y - 0.344 * u - 0.714 * v, y + 1.772 * u];
-      y = 1.164 * (y - 16);
-      return [y + 1.596 * v, y - 0.392 * u - 0.813 * v, y + 2.017 * u];
-    }
-    async function average(frame) {
-      const vr = frame.visibleRect, fmt = frame.format;
-      const rect = { x: even(vr.x + vr.width / 4), y: even(vr.y + vr.height / 4),
-                     width: even(vr.width / 2), height: even(vr.height / 2) };
-      const w = rect.width, h = rect.height;
-      if (["NV12", "I420", "RGBA", "RGBX", "BGRA", "BGRX"].includes(fmt)) {
-        const size = frame.allocationSize({ rect });
-        if (!buf || buf.length < size) buf = new Uint8Array(size);
-        const L = await frame.copyTo(buf, { rect });
-        let s0 = 0, s1 = 0, s2 = 0, n = 0;
-        if (fmt === "NV12" || fmt === "I420") {
-          for (let r = 0; r < h; r += 2) {                    // every 2nd pixel is plenty
-            const o = L[0].offset + r * L[0].stride;
-            for (let c = 0; c < w; c += 2) { s0 += buf[o + c]; n++; }
-          }
-          let m = 0;
-          for (let r = 0; r < h / 2; r++) {
-            if (fmt === "NV12") {
-              const o = L[1].offset + r * L[1].stride;
-              for (let c = 0; c < w; c += 2) { s1 += buf[o + c]; s2 += buf[o + c + 1]; m++; }
-            } else {
-              const ou = L[1].offset + r * L[1].stride, ov = L[2].offset + r * L[2].stride;
-              for (let c = 0; c < w / 2; c++) { s1 += buf[ou + c]; s2 += buf[ov + c]; m++; }
-            }
-          }
-          const full = !!(frame.colorSpace && frame.colorSpace.fullRange);
-          return toRgb(s0 / n, s1 / m, s2 / m, full);
-        }
-        const bgr = fmt[0] === "B";
-        for (let r = 0; r < h; r += 2) {
-          const o = L[0].offset + r * L[0].stride;
-          for (let c = 0; c < w; c += 2) { const i = o + 4 * c; s0 += buf[i]; s1 += buf[i + 1]; s2 += buf[i + 2]; n++; }
-        }
-        return bgr ? [s2 / n, s1 / n, s0 / n] : [s0 / n, s1 / n, s2 / n];
-      }
-      // Any other pixel format: let the browser convert a 32x24 thumbnail
-      if (!canvas) { canvas = new OffscreenCanvas(32, 24); ctx = canvas.getContext("2d", { willReadFrequently: true }); }
-      ctx.drawImage(frame, rect.x, rect.y, w, h, 0, 0, 32, 24);
-      const d = ctx.getImageData(0, 0, 32, 24).data;
-      let r = 0, g = 0, b = 0;
-      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-      return [r / 768, g / 768, b / 768];
-    }
-    // Results go to the page in batches (5 per second), so the page is not woken up for
-    // every frame. lag = how much later than captured the frames are processed, relative
-    // to the start; if it keeps growing, the phone cannot keep up.
-    // Reader 2: the GPU shrinks the central part of the frame to 16x12 on a 2D canvas
-    let cv = null, cx = null;
-    function avgCanvas(frame) {
-      if (!cv) { cv = new OffscreenCanvas(16, 12); cx = cv.getContext("2d", { alpha: false }); }
-      // drawImage works in display size, which can differ from the coded size of the frame
-      const w = frame.displayWidth, h = frame.displayHeight;
-      cx.drawImage(frame, w / 4, h / 4, w / 2, h / 2, 0, 0, 16, 12);
-      return mean4(cx.getImageData(0, 0, 16, 12).data);
-    }
-    // Reader 3: the same with WebGL (texture upload and a 16x12 draw)
-    let gl = null, glPx = null;
-    function initGL() {
-      gl = new OffscreenCanvas(16, 12).getContext("webgl", { alpha: false, antialias: false, depth: false,
-                                                            stencil: false, preserveDrawingBuffer: false });
-      if (!gl) throw new Error("WebGL not available in the worker");
-      const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
-      const prog = gl.createProgram();
-      gl.attachShader(prog, sh(gl.VERTEX_SHADER,
-        "attribute vec2 p; varying vec2 uv; void main() { uv = 0.25 + (p * 0.5 + 0.5) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }"));
-      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,
-        "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main() { gl_FragColor = texture2D(tex, uv); }"));
-      gl.linkProgram(prog); gl.useProgram(prog);
-      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(prog, "p");
-      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-      for (const [k, v] of [[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE], [gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE],
-                            [gl.TEXTURE_MIN_FILTER, gl.LINEAR], [gl.TEXTURE_MAG_FILTER, gl.LINEAR]])
-        gl.texParameteri(gl.TEXTURE_2D, k, v);
-      gl.viewport(0, 0, 16, 12);
-      glPx = new Uint8Array(16 * 12 * 4);
-    }
-    function avgGL(frame) {
-      if (!gl) initGL();
-      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, frame);
-      gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-      gl.readPixels(0, 0, 16, 12, gl.RGBA, gl.UNSIGNED_BYTE, glPx);
-      return mean4(glPx);
-    }
-    function mean4(d) {
-      let r = 0, g = 0, b = 0;
-      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-      const n = d.length / 4;
-      return [r / n, g / n, b / n];
-    }
-    const READERS = { copy: average, canvas: avgCanvas, webgl: avgGL };
-
-    // "auto": while waiting for the finger, try every reader on a few frames and keep the
-    // fastest one. Phones differ a lot: on some, copying raw bytes is slow, on others the GPU.
-    onmessage = async e => {
-      const reader = e.data.readable.getReader();
-      const trial = ["webgl", "canvas", "copy"], times = { webgl: [], canvas: [], copy: [] };
-      let method = e.data.method === "auto" ? null : e.data.method, frames = 0;
-      let batch = [], lastPost = performance.now(), ms = 0, fmt = "", now0 = null, ts0 = 0, lag = 0;
-      for (;;) {
-        const { value: frame, done } = await reader.read();
-        if (done) break;
-        const ts = frame.timestamp / 1e6, t0 = performance.now();
-        fmt = frame.format;
-        if (now0 === null) { now0 = t0; ts0 = ts; }
-        lag = Math.max(0, (t0 - now0) - (ts - ts0) * 1000);
-        frames++;
-        let use = method;
-        if (!use) {                                  // still choosing: 8 frames per reader
-          const k = Math.floor(Math.max(0, frames - 3) / 8);
-          if (k < trial.length) use = trial[k];
-          else {
-            const med = a => a.length ? a.slice().sort((p, q) => p - q)[a.length >> 1] : Infinity;
-            method = use = trial.reduce((p, q) => med(times[q]) < med(times[p]) ? q : p);
-          }
-        }
-        try {
-          const [r, g, b] = await READERS[use](frame);
-          ms = performance.now() - t0;
-          if (!method && frames > 3) times[use].push(ms);
-          batch.push(ts, r, g, b);
-        } catch (err) {
-          if (!method) times[use].push(Infinity);       // this reader does not work here
-          else postMessage({ error: use + ": " + String(err) });
-        }
-        finally { frame.close(); }
-        if (performance.now() - lastPost >= 200) {
-          postMessage({ batch, ms, fmt, lag, method: method || "testing " + use });
-          batch = []; lastPost = performance.now();
-        }
-      }
-    };`;
-  const useWorker = typeof MediaStreamTrackProcessor === "function" && typeof OffscreenCanvas === "function";
-  let worker = null, workerTrack = null;
-
-  // Main-thread fallback (Safari, Firefox): the GPU shrinks the frame to 32x24 with WebGL
-  // and only those pixels are read back. Plain 2D canvas is the last resort.
-  const GW = 32, GH = 24;
-  function makeGL() {
-    try {
-      const c = document.createElement("canvas"); c.width = GW; c.height = GH;
-      const gl = c.getContext("webgl", { alpha: false, antialias: false, depth: false, stencil: false,
-                                          preserveDrawingBuffer: false, powerPreference: "low-power" });
-      if (!gl) return null;
-      const shader = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s); return s; };
-      const prog = gl.createProgram();
-      // the quad samples only the central 50 % of the camera image
-      gl.attachShader(prog, shader(gl.VERTEX_SHADER,
-        "attribute vec2 p; varying vec2 uv; void main() { uv = 0.25 + (p * 0.5 + 0.5) * 0.5; gl_Position = vec4(p, 0.0, 1.0); }"));
-      gl.attachShader(prog, shader(gl.FRAGMENT_SHADER,
-        "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main() { gl_FragColor = texture2D(tex, uv); }"));
-      gl.linkProgram(prog);
-      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) return null;
-      gl.useProgram(prog);
-      gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-      const loc = gl.getAttribLocation(prog, "p");
-      gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
-      gl.bindTexture(gl.TEXTURE_2D, gl.createTexture());
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-      gl.viewport(0, 0, GW, GH);
-      const px = new Uint8Array(GW * GH * 4);
-      return () => {
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
-        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-        gl.readPixels(0, 0, GW, GH, gl.RGBA, gl.UNSIGNED_BYTE, px);
-        let r = 0, g = 0, b = 0;
-        for (let i = 0; i < px.length; i += 4) { r += px[i]; g += px[i + 1]; b += px[i + 2]; }
-        const n = GW * GH;
-        return [r / n, g / n, b / n];
-      };
-    } catch (e) { return null; }
-  }
-  let glGrab = null, mode = "", frameMs = 0, frameFmt = "";
-  function noteTiming(ms, fmt) {
-    frameMs = frameMs ? 0.95 * frameMs + 0.05 * ms : ms;
-    if (fmt) frameFmt = fmt;
-  }
-
-  const SETTLE = 2;              // seconds of steady finger contact before recording starts
-  let proc = new PulseProcessor();
-  let stream = null, track = null, torchOn = false, wakeLock = null, recordedAt = null;
-  let state = "idle";            // idle -> preview (waiting for the finger) -> recording -> idle
-  let clock = null, base = 0, lastT = -1, fingerSince = null, lastMediaTime = -1;
-  let rec = { t: [], r: [], g: [], b: [], finger: 0 }, duration = 60, result = null;
-  let colors = {};
+  let proc = new PulseProcessor(), rec = null, result = null, recordedAt = new Date();
+  let state = "idle", colors = {};
 
   const text = (id, value) => { const e = $(id); const v = String(value); if (e.textContent !== v) e.textContent = v; };
   function setStatus(msg, level) {
@@ -568,250 +290,7 @@ if (typeof document !== "undefined") (() => {
                muted: css.getPropertyValue("--muted") };
   }
 
-  // Each applyConstraints call replaces the previous one, so the torch and the camera
-  // lock (exposure, white balance, focus) are always sent together.
-  let camLock = {}, lockState = "none", lockedAt = null, lockInfo = "";
-  async function setTorch(on) {
-    if (!track) return false;
-    try {
-      await track.applyConstraints({ advanced: [{ torch: on, ...camLock }] });
-      torchOn = on;
-    } catch (e) { torchOn = false; }
-    text("torchBtn", "Flash: " + (torchOn ? "on" : "off"));
-    return torchOn;
-  }
-
-  async function listCameras() {
-    try {
-      const devs = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === "videoinput");
-      const sel = $("camera"), cur = track && track.getSettings ? track.getSettings().deviceId : null;
-      sel.innerHTML = "";
-      devs.forEach((d, i) => {
-        const o = document.createElement("option");
-        o.value = d.deviceId; o.textContent = d.label || ("Camera " + (i + 1));
-        if (d.deviceId === cur) o.selected = true;
-        sel.appendChild(o);
-      });
-      sel.disabled = devs.length < 2;
-    } catch (e) { /* ignore */ }
-  }
-
-  async function openCamera(deviceId) {
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    const video_c = deviceId
-      ? { deviceId: { exact: deviceId } }
-      : { facingMode: { ideal: "environment" } };
-    Object.assign(video_c, { width: { ideal: 320 }, height: { ideal: 240 }, frameRate: { ideal: 30 } });
-    stream = await navigator.mediaDevices.getUserMedia({ video: video_c, audio: false });
-    track = stream.getVideoTracks()[0];
-    video.srcObject = stream;
-    await video.play();
-    await new Promise(r => setTimeout(r, 300));     // some phones need a moment before the flash
-    const ok = await setTorch(true);
-    $("torchBtn").disabled = false;
-    if (!ok) setStatus("Flash not available – try another camera or an external light", "warn");
-  }
-
-  // Time of the frame in seconds. The capture time from the camera is used when the
-  // browser provides it: the time the page happens to process the frame jitters with
-  // load, and that jitter distorts the beat-to-beat intervals.
-  function frameTime(now, md) {
-    if (!clock) clock = md && typeof md.captureTime === "number" ? "capture"
-                      : md && typeof md.mediaTime === "number" && md.mediaTime > 0 ? "media" : "now";
-    if (clock === "capture" && typeof md?.captureTime === "number") return md.captureTime / 1000;
-    if (clock === "media" && typeof md?.mediaTime === "number") return md.mediaTime;
-    return now / 1000;
-  }
-
-  function readFrame(now, md) {
-    if (state !== "preview") return;
-    if (video.readyState >= 2) {
-      // Without requestVideoFrameCallback the same frame may come twice: skip it
-      const fresh = md || video.currentTime !== lastMediaTime;
-      lastMediaTime = video.currentTime;
-      if (fresh) handleFrame(frameTime(now, md));
-    }
-    if (state === "preview") schedule();
-  }
-
-  function handleFrame(ts) {
-    const t0 = performance.now();
-    let rgb = null;
-    if (mode === "webgl") {
-      try { rgb = glGrab(); } catch (e) { mode = "2d"; }      // e.g. the GPU refused the video
-    }
-    if (!rgb) {
-      const vw = video.videoWidth, vh = video.videoHeight;
-      // central 50 % of the image
-      gctx.drawImage(video, vw * 0.25, vh * 0.25, vw * 0.5, vh * 0.5, 0, 0, grab.width, grab.height);
-      const d = gctx.getImageData(0, 0, grab.width, grab.height).data;
-      let r = 0, g = 0, b = 0; const n = d.length / 4;
-      for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
-      rgb = [r / n, g / n, b / n];
-    }
-    noteTiming(performance.now() - t0);
-    handleSample(ts, rgb[0], rgb[1], rgb[2]);
-  }
-
-  function startWorker() {
-    stopWorker();
-    workerTrack = track.clone();          // the preview keeps the original track
-    const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" }));
-    worker = new Worker(url); URL.revokeObjectURL(url);
-    // maxBufferSize: if the worker falls behind, old frames are dropped instead of queuing up
-    const readable = new MediaStreamTrackProcessor({ track: workerTrack, maxBufferSize: 2 }).readable;
-    worker.postMessage({ readable, method: $("reader").value }, [readable]);
-    worker.onmessage = e => {
-      const m = e.data;
-      if (m.error) { showError("Frame processing failed: " + m.error); return; }
-      noteTiming(m.ms, m.fmt); lagMs = m.lag; workerMethod = m.method;
-      const b = m.batch;
-      for (let i = 0; i < b.length && state === "preview"; i += 4) handleSample(b[i], b[i + 1], b[i + 2], b[i + 3]);
-    };
-  }
-  function stopWorker() {
-    if (worker) { worker.terminate(); worker = null; }
-    if (workerTrack) { workerTrack.stop(); workerTrack = null; }
-  }
-  function startCapture() {
-    if (useWorker && $("reader").value !== "main") { mode = "worker"; startWorker(); return; }
-    if (!glGrab) glGrab = makeGL();
-    mode = glGrab ? "webgl" : "2d";
-    schedule();
-  }
-
-  // Like native apps (e.g. phyphox), switch off the automatic exposure once the finger is
-  // on the camera. Auto exposure would keep correcting exactly the small brightness
-  // changes caused by the pulse. Only the current values are frozen; the exposure time
-  // is capped at 1/30 s so that the camera keeps 30 frames per second.
-  async function lockCamera() {
-    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
-    const s = track && track.getSettings ? track.getSettings() : {};
-    const lock = {}, info = [];
-    const clamp = (v, range) => Math.min(range.max, Math.max(range.min, v));
-    if (caps.exposureMode && caps.exposureMode.includes("manual")) {
-      lock.exposureMode = "manual";
-      if (caps.exposureTime && s.exposureTime) {
-        lock.exposureTime = clamp(Math.min(s.exposureTime, 333), caps.exposureTime);   // 333 = 1/30 s
-        info.push("1/" + Math.round(10000 / lock.exposureTime) + " s");
-      }
-      if (caps.iso && s.iso) { lock.iso = s.iso; info.push("ISO " + Math.round(s.iso)); }
-    }
-    if (caps.whiteBalanceMode && caps.whiteBalanceMode.includes("manual")) {
-      lock.whiteBalanceMode = "manual";
-      if (caps.colorTemperature && s.colorTemperature) lock.colorTemperature = s.colorTemperature;
-      info.push("WB");
-    }
-    if (caps.focusMode && caps.focusMode.includes("manual")) {
-      lock.focusMode = "manual";
-      if (caps.focusDistance && typeof s.focusDistance === "number") lock.focusDistance = s.focusDistance;
-      info.push("focus");
-    }
-    if (!Object.keys(lock).length) { lockInfo = "camera auto exposure (this phone does not allow locking it)"; return; }
-    try {
-      await track.applyConstraints({ advanced: [{ torch: torchOn, ...lock }] });
-      camLock = lock;
-      lockInfo = "camera locked: " + (info.join(", ") || "exposure");
-    } catch (e) { lockInfo = "camera lock failed: " + e.message; }
-  }
-
-  // Back to automatic camera settings (used when the finger is lost after locking)
-  async function unlockCamera(reason) {
-    const caps = track && track.getCapabilities ? track.getCapabilities() : {};
-    const auto = {};
-    for (const k of ["exposureMode", "whiteBalanceMode", "focusMode"])
-      if (camLock[k] && caps[k] && caps[k].includes("continuous")) auto[k] = "continuous";
-    camLock = {};
-    try { await track.applyConstraints({ advanced: [{ torch: torchOn, ...auto }] }); } catch (e) { /* ignore */ }
-    lockInfo = reason;
-  }
-
-  let lastEngine = -1, rgbNow = [0, 0, 0], lagMs = null, workerMethod = "", arrivals = [];
-  function showEngine(ts) {
-    if (ts - lastEngine < 0.5) return;
-    lastEngine = ts;
-    const [r, g, b] = rgbNow.map(Math.round);
-    const st = track && track.getSettings ? track.getSettings() : {};
-    const cam = st.width ? `camera ${st.width}x${st.height}` + (st.frameRate ? ` at ${Math.round(st.frameRate)} fps` : "") : "";
-    text("engine", `Reading: ${mode}${workerMethod ? " / " + workerMethod : ""}${frameFmt ? " (" + frameFmt + ")" : ""}, ` +
-                   `${frameMs.toFixed(1)} ms per frame, received ${arrivals.length / 2} fps, ${cam}, ` +
-                   `R ${r} G ${g} B ${b}` + (lagMs !== null ? `, lag ${Math.round(lagMs)} ms` : "") + (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
-  }
-
-  // ----- Recording: only store the averaged colour of every frame -----
-  // Nothing is evaluated while recording, so the phone only has to read the camera.
-  // The pulse wave is processed after the recording has finished.
-
-  function handleSample(ts, r, g, b) {
-    const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
-    rgbNow = [r, g, b];
-    arrivals.push(ts);                        // frames received in the last 2 s
-    while (arrivals.length && arrivals[0] < ts - 2) arrivals.shift();
-    showEngine(ts);
-
-    if (state === "preview") {
-      // Wait until the finger has covered the camera steadily, then start recording
-      if (!finger) {
-        fingerSince = null;
-        setStatus("Cover the camera and flash with your fingertip", "bad");
-        if (lockState === "done" && Object.keys(camLock).length) {
-          lockState = "off";            // do not try again during this recording
-          unlockCamera("lock undone: the finger was not visible with locked exposure");
-        }
-        return;
-      }
-      if (fingerSince === null) fingerSince = ts;
-      const left = SETTLE - (ts - fingerSince);
-      if (left > 0) { setStatus(`Finger detected – keep still, starting in ${Math.ceil(left)} s`, "warn"); return; }
-      if (lockState === "none") {
-        if ($("lockExp").checked) {
-          lockState = "pending";
-          lockCamera().finally(() => { lockState = "done"; lockedAt = null; });
-        } else { lockState = "off"; lockedAt = ts - 1; }
-      }
-      if (lockState === "pending") { setStatus("Finger detected – setting up the camera…", "warn"); return; }
-      if (lockedAt === null) lockedAt = ts;      // after locking, give the camera 1 s
-      if (ts - lockedAt < 1) { setStatus("Finger detected – keep still, starting…", "warn"); return; }
-      startRecording();
-    }
-  }
-
-  // Countdown and progress ring, updated at most 10 times per second
-  let lastUiUpdate = 0;
-  function uiLoop(now) {
-    if (state === "recording" && now - lastUiUpdate > 100) {
-      lastUiUpdate = now;
-      const tNow = (now - recStart) / 1000;
-      text("count", Math.max(0, Math.ceil(duration - tNow))); text("countLabel", "s left");
-      $("ring").style.strokeDashoffset = (552.9 * (1 - Math.min(1, tNow / duration))).toFixed(1);
-    }
-    requestAnimationFrame(uiLoop);
-  }
-
-  // ----- Recording a video -----
-  // Reading live camera frames in JavaScript is unreliable on some phones (the browser
-  // delivers only a few frames per second although the camera runs at 30). So the page
-  // records a video, which the phone encodes natively at the full frame rate, and reads
-  // every frame of it afterwards, when there is no time pressure.
-  let recorder = null, chunks = [], recStart = 0, recTimer = null, recDone = null;
-  function startRecording() {
-    stopWorker();                                   // no live frame reading while recording
-    const types = ["video/webm;codecs=vp8", "video/webm", "video/mp4"];
-    const mimeType = types.find(x => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
-    if (!window.MediaRecorder || !mimeType) {
-      showError("This browser cannot record video. Use \"Analyze a video\" with the camera app instead.");
-      stop(false); return;
-    }
-    chunks = [];
-    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 });
-    recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
-    recDone = new Promise(res => { recorder.onstop = () => res(new Blob(chunks, { type: mimeType })); });
-    recorder.start();
-    state = "recording"; recStart = performance.now(); recordedAt = new Date();
-    setStatus("Recording – keep still", "ok");
-    recTimer = setTimeout(() => stop(true), duration * 1000 + 300);
-  }
-
+  // ----- Reading the video -----
   // Plays the video and reads its frames (own timestamp, mean colour of the centre).
   // Skipped frames do not matter, every frame read has its exact time in the video. Only if
   // fewer than 15 frames per second could be read, the video is played again more slowly.
@@ -830,7 +309,7 @@ if (typeof document !== "undefined") (() => {
     try {
       await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("the video cannot be decoded")); });
       if (!v.requestVideoFrameCallback) throw new Error("this browser cannot read video frames");
-      const maxDur = fromFile ? 30 : duration;
+      const maxDur = 30;                        // the first 30 s with the finger
       const out = { t: [], r: [], g: [], b: [], finger: 0, frames: 0, dropped: 0 };
       let start = null, steady = null, lastPresented = null, lastStatus = 0;
       await new Promise((resolve, reject) => {
@@ -890,30 +369,31 @@ if (typeof document !== "undefined") (() => {
     }
   }
 
-  async function evaluateVideo(blob, fromFile) {
+  async function evaluateVideo(file) {
     state = "evaluating"; evalCancel = false;
-    text("startBtn", "Cancel");
-    text("count", "…"); text("countLabel", "evaluating");
-    setStatus("Evaluating the video…", "warn");
+    showError(""); text("analyzeBtn", "Cancel");
+    $("results").hidden = $("messages").hidden = true;
+    recordedAt = new Date(file.lastModified || Date.now());
+    setStatus("Looking for the finger in the video…", "warn");
     let out;
-    try { out = await readVideo(blob, fromFile); }
-    catch (e) { state = "idle"; text("startBtn", "Start"); showError("Could not read the video: " + e.message); setStatus("Evaluation failed", "bad"); return; }
-    state = "idle"; text("startBtn", "Start");
-    if (evalCancel) { text("count", ""); text("countLabel", ""); setStatus("Evaluation cancelled", ""); return; }
+    try { out = await readVideo(file, true); }
+    catch (e) { out = null; showError("Could not read the video: " + e.message); }
+    state = "idle"; text("analyzeBtn", "Choose the video");
+    if (!out) { setStatus("Evaluation failed", "bad"); return; }
+    if (evalCancel) { setStatus("Evaluation cancelled", ""); return; }
     rec = out;
     const dur = rec.t.length ? rec.t[rec.t.length - 1] : 0;
     if (dur < 10) {
-      text("count", ""); text("countLabel", "");
-      setStatus(fromFile && !rec.t.length ? "No finger found in the video" : "Recording too short (at least 10 s) – try again", "bad");
+      setStatus(rec.t.length ? "Too short with the finger on the camera (at least 10 s) – record again"
+                             : "No finger found in the video – cover the camera and the flash", "bad");
       return;
     }
-    text("count", "✓"); text("countLabel", "done");
     analyze();
     setStatus("Done – see the result below", result.s ? "ok" : "bad");
     $("results").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
-  // ----- Evaluation after the recording -----
+  // ----- Evaluation -----
 
   // The recording is evaluated separately for the red, green and blue channel and the one
   // with the most regular pulse wins. Native apps (e.g. phyphox) set the camera so that the
@@ -956,14 +436,13 @@ if (typeof document !== "undefined") (() => {
             `${Math.round(100 * accepted)} % of detected beats accepted, pulse taken from the ` +
             `${CHANNEL_NAME[best.ch]} channel` +
             (redClipped > 0.2 ? ` (red was over-exposed ${Math.round(100 * redClipped)} % of the time).` : ".");
-    if (fps < 15) q += ` The recording has only ${Math.round(fps)} frames per second, at least 20 are needed: ` +
-                       "record the video with the phone's camera app and use Analyze a video.";
+    if (fps < 15) q += ` The video has only ${Math.round(fps)} frames per second, at least 20 are needed: ` +
+                       "record it again at 30 frames per second.";
     if (!s) q += " Not enough clean beats for a result – try again and keep still.";
     else if (accepted < 0.7 || fingerShare < 0.9) q += " The signal was noisy, treat the result with caution.";
     text("quality", q);
     resizePlots();
     drawAll(); drawRate();
-    $("dlSignal").disabled = $("dlBeats").disabled = false;
     if (s) { $("messages").hidden = false; showMessage(currentFmt); }
   }
 
@@ -1101,94 +580,13 @@ if (typeof document !== "undefined") (() => {
     text("msgNote", m.note);
   }
 
-  // ----- Start and stop -----
-
-  function schedule() {
-    if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(readFrame);
-    else requestAnimationFrame(now => readFrame(now, null));
-  }
-
-  async function start() {
-    showError("");
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      showError("This browser cannot access the camera. Open the page over HTTPS in Chrome (Android) or Safari (iPhone).");
-      return;
-    }
-    try {
-      setStatus("Opening camera…");
-      camLock = {}; lockState = "none"; lockedAt = null; lockInfo = "";
-      await openCamera($("camera").value && !$("camera").disabled ? $("camera").value : null);
-      await listCameras();
-    } catch (e) {
-      showError("Could not open the camera: " + e.message + ". Check that camera access is allowed for this site.");
-      setStatus("Camera not available", "bad");
-      return;
-    }
-    duration = +$("duration").value;
-    result = null; rec = { t: [], r: [], g: [], b: [], finger: 0 };
-    $("results").hidden = $("messages").hidden = true;
-    $("dlSignal").disabled = $("dlBeats").disabled = true;
-    state = "preview"; clock = null; fingerSince = null; lastMediaTime = -1;
-    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = ""; lastEngine = -Infinity;
-    workerMethod = ""; arrivals = [];
-    text("startBtn", "Stop"); text("count", duration); text("countLabel", "s");
-    $("ring").style.strokeDashoffset = "552.9"; lagMs = null;
-    setStatus("Cover the camera and flash with your fingertip", "bad");
-    try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { /* optional */ }
-    startCapture();
-  }
-
-  async function stop(finished) {
-    if (state === "evaluating" || state === "idle") return;
-    const wasRecording = state === "recording";
-    clearTimeout(recTimer);
-    if (wasRecording && recorder && recorder.state !== "inactive") recorder.stop();
-    state = "idle";
-    stopWorker();
-    const blob = wasRecording ? await recDone : null;
-    await setTorch(false);
-    if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null; track = null; video.srcObject = null;
-    $("torchBtn").disabled = true;
-    try { await wakeLock?.release(); } catch (e) { /* ignore */ }
-    text("startBtn", "Start");
-    if (!blob) { text("count", ""); text("countLabel", ""); setStatus("Stopped", ""); return; }
-    await evaluateVideo(blob, false);
-  }
-
-  function download(name, csv) {
-    const blob = new Blob([csv], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  }
-  function stamp() {
-    const d = recordedAt || new Date();
-    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
-  }
-
-  $("startBtn").onclick = () => {
+  $("analyzeBtn").onclick = () => {
     if (state === "evaluating") evalCancel = true;
-    else if (state === "idle") start();
-    else stop(false);
+    else $("videoFile").click();
   };
-  $("videoBtn").onclick = () => { if (state === "idle") $("videoFile").click(); };
-  $("videoFile").onchange = async () => {
+  $("videoFile").onchange = () => {
     const file = $("videoFile").files[0]; $("videoFile").value = "";
-    if (!file) return;
-    showError(""); result = null; recordedAt = new Date(file.lastModified || Date.now());
-    $("results").hidden = $("messages").hidden = true;
-    $("dlSignal").disabled = $("dlBeats").disabled = true;
-    await evaluateVideo(file, true);
-  };
-  $("torchBtn").onclick = () => setTorch(!torchOn);
-  $("camera").onchange = async () => {
-    if (state === "idle") return;
-    camLock = {}; lockInfo = "";
-    if (state === "preview") lockState = "none";
-    try { await openCamera($("camera").value); if (useWorker) startWorker(); }
-    catch (e) { showError("Could not switch camera: " + e.message); }
+    if (file) evaluateVideo(file);
   };
   document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showMessage(b.dataset.fmt));
   $("copyBtn").onclick = async () => {
@@ -1196,12 +594,9 @@ if (typeof document !== "undefined") (() => {
     catch (e) { text("copyBtn", "Copy failed"); }
     setTimeout(() => text("copyBtn", "Copy"), 1500);
   };
-  $("dlSignal").onclick = () => download(`ppg-signal-${stamp()}.csv`, proc.signalCSV());
-  $("dlBeats").onclick = () => download(`ppg-beats-${stamp()}.csv`, proc.beatsCSV());
-  document.addEventListener("visibilitychange", () => { if (document.hidden && state !== "idle") stop(false); });
   window.addEventListener("resize", resizePlots);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); resizePlots(); });
-  readColors(); requestAnimationFrame(uiLoop);
+  readColors();
 })();
 
 if (typeof module !== "undefined") module.exports = { PulseProcessor };

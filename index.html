@@ -878,7 +878,9 @@ if (typeof document !== "undefined") (() => {
         v.play().catch(reject);
       });
       const span = out.t.length ? out.t[out.t.length - 1] : 0;
-      if (!evalCancel && span > 0 && out.frames / span < 15 && rate > 0.25) {
+      // play again more slowly only if frames were really skipped during playback; a video
+      // that itself has few frames would not get better
+      if (!evalCancel && span > 0 && out.frames / span < 15 && out.dropped > 0.3 * (out.frames + out.dropped) && rate > 0.25) {
         v.remove(); URL.revokeObjectURL(url);
         return readVideo(blob, fromFile, rate / 2);
       }
@@ -954,8 +956,8 @@ if (typeof document !== "undefined") (() => {
             `${Math.round(100 * accepted)} % of detected beats accepted, pulse taken from the ` +
             `${CHANNEL_NAME[best.ch]} channel` +
             (redClipped > 0.2 ? ` (red was over-exposed ${Math.round(100 * redClipped)} % of the time).` : ".");
-    if (fps < 15) q += ` Only ${Math.round(fps)} camera frames per second were received, at least 20 are needed: ` +
-                       "turn on the flash, or try another frame reading method under How to measure.";
+    if (fps < 15) q += ` The recording has only ${Math.round(fps)} frames per second, at least 20 are needed: ` +
+                       "record the video with the phone's camera app and use Analyze a video.";
     if (!s) q += " Not enough clean beats for a result – try again and keep still.";
     else if (accepted < 0.7 || fingerShare < 0.9) q += " The signal was noisy, treat the result with caution.";
     text("quality", q);

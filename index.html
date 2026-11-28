@@ -48,6 +48,11 @@
         font-size: .72rem; line-height: 1.45; overflow-x: auto; white-space: pre; margin: 0 0 8px; }
   .note { font-size: .8rem; color: var(--muted); }
   .err { color: var(--accent); font-size: .9rem; margin: 10px 0 0; }
+  details.card summary { font-weight: 600; cursor: pointer; }
+  .how { font-size: .9rem; line-height: 1.5; }
+  .how h3 { font-size: .92rem; margin: 14px 0 4px; }
+  .how p { margin: 0 0 6px; }
+  canvas#plotRaw { height: 100px; margin: 6px 0 4px; }
   [hidden] { display: none !important; }
 </style>
 </head>
@@ -106,6 +111,58 @@
     <p class="note" id="msgNote" style="margin:0 0 8px"></p>
     <button id="copyBtn">Copy</button>
   </div>
+
+  <details class="card" id="how">
+    <summary>How the evaluation works</summary>
+    <div class="how">
+      <h3>1. Brightness of every frame</h3>
+      <p>For every frame of the video the page takes the central half of the image and averages its red,
+        green and blue values. That gives three numbers per frame (about 30 per second), each with the time
+        of the frame in the video. With every heartbeat more blood flows into the fingertip, the finger
+        absorbs more light and the image gets slightly darker, usually by less than 1&nbsp;%.</p>
+      <div id="rawBox" hidden>
+        <div class="plotlabel" id="rawLabel"></div>
+        <canvas id="plotRaw"></canvas>
+      </div>
+
+      <h3>2. Is the finger on the camera?</h3>
+      <p>A frame counts as "finger on the camera" when red is above 60 and at least 1.6 times higher
+        than green and blue. The evaluation starts after the finger has covered the camera for 1 second
+        and uses at most the following 30 seconds.</p>
+
+      <h3>3. Removing slow changes</h3>
+      <p>Pressure of the finger, its warmth or the camera's automatic exposure change the brightness slowly.
+        From every value the average of the previous 2 seconds is subtracted, so only fast changes remain.
+        The signal is then turned upside down (darker = more blood = up) and smoothed over 0.12 seconds.
+        The result is the pulse wave shown in the result.</p>
+
+      <h3>4. Finding the beats</h3>
+      <p>A beat is a peak that is the highest point within 0.15 to 0.25 seconds on both sides and rises
+        from the lowest point of the previous 0.45 seconds by at least 55&nbsp;% of the typical rise of the
+        last beats. Its time is refined between two frames by a parabola through three points. A second
+        peak sooner than 0.3 seconds, or much sooner than usual, is the second hump of the same pulse
+        wave (dicrotic notch); only the higher of the two is kept.</p>
+
+      <h3>5. Accepted or rejected</h3>
+      <p>The interval between two beats (RR) is accepted (green dot) when it differs by less than
+        30&nbsp;% from the median of the last 8 accepted intervals. Otherwise the beat is rejected
+        (orange dot), typically because of movement. Intervals longer than 1.7 seconds (below 35 beats
+        per minute) are never accepted.</p>
+
+      <h3>6. Which colour</h3>
+      <p>All three colour channels are evaluated this way and the one with the most accepted beats
+        (weighted by the share of accepted beats) is used. With the flash on, red is often over-exposed
+        (stuck at 255) and the pulse is then clearer in green or blue. A channel that is over-exposed
+        for more than half of the time is skipped.</p>
+
+      <h3>7. The numbers in the result</h3>
+      <p><b>Mean BPM</b> = 60&nbsp;000 / average accepted RR in milliseconds. <b>Min BPM</b> comes from
+        the longest accepted RR. <b>SDNN</b> is the standard deviation of the accepted RR intervals and
+        <b>RMSSD</b> the root mean square of the differences between consecutive intervals; both describe
+        heart rate variability. When the finger was on the camera less than 90&nbsp;% of the time or fewer
+        than 70&nbsp;% of the beats were accepted, the result is marked as uncertain.</p>
+    </div>
+  </details>
 
   <p class="note">For teaching purposes only (Medical Informatics, FRI UNIZA). Not a medical device.</p>
 </main>
@@ -442,7 +499,7 @@ if (typeof document !== "undefined") (() => {
     else if (accepted < 0.7 || fingerShare < 0.9) q += " The signal was noisy, treat the result with caution.";
     text("quality", q);
     resizePlots();
-    drawAll(); drawRate();
+    drawAll(); drawRate(); drawRaw();
     if (s) { $("messages").hidden = false; showMessage(currentFmt); }
   }
 
@@ -453,7 +510,26 @@ if (typeof document !== "undefined") (() => {
     const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return { ctx, W, H };
   }
-  function resizePlots() { if (result) { drawAll(); drawRate(); } }
+  function resizePlots() { if (result) { drawAll(); drawRate(); drawRaw(); } }
+
+  // Step 1 of "How the evaluation works": the raw brightness of the chosen channel
+  function drawRaw() {
+    $("rawBox").hidden = false;
+    text("rawLabel", `Your recording: average brightness of the ${CHANNEL_NAME[result.channel]} channel (0 to 255), before any processing`);
+    const { ctx, W, H } = setupCanvas($("plotRaw"));
+    ctx.clearRect(0, 0, W, H);
+    const v = rec[result.channel], tt = rec.t, n = v.length;
+    if (n < 2) return;
+    let lo = Math.min(...v), hi = Math.max(...v);
+    if (hi - lo < 0.5) { lo -= 0.25; hi += 0.25; }
+    const pad = 12, tEnd = tt[n - 1];
+    const X = x => 30 + x / tEnd * (W - 30), Y = y => H - pad - (y - lo) / (hi - lo) * (H - 2 * pad);
+    ctx.fillStyle = colors.muted; ctx.font = "11px system-ui, sans-serif";
+    ctx.fillText(hi.toFixed(1), 0, Y(hi) + 4); ctx.fillText(lo.toFixed(1), 0, Y(lo) + 4);
+    ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.2; ctx.beginPath();
+    for (let i = 0; i < n; i++) { const x = X(tt[i]), y = Y(v[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+  }
 
   function drawAll() {
     const { ctx, W, H } = setupCanvas($("plotAll"));

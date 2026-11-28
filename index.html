@@ -9,31 +9,42 @@
   :root {
     --bg: #f6f7f9; --card: #fff; --text: #1b1f24; --muted: #667085;
     --accent: #d92d20; --accent-soft: #fee4e2; --ok: #12b76a; --warn: #f79009;
-    --line: #e4e7ec; --radius: 14px;
+    --line: #e4e7ec; --code: #f2f4f7; --radius: 14px;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #0f1115; --card: #181b21; --text: #eef0f3; --muted: #98a2b3;
-            --accent-soft: #3a1714; --line: #2a2f38; }
+            --accent-soft: #3a1714; --line: #2a2f38; --code: #11141a; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
          background: var(--bg); color: var(--text); -webkit-text-size-adjust: 100%; }
   main { max-width: 560px; margin: 0 auto; padding: 16px 16px 40px; }
   h1 { font-size: 1.25rem; margin: 4px 0 2px; }
+  h2 { font-size: 1rem; margin: 0 0 10px; }
   .sub { color: var(--muted); font-size: .9rem; margin: 0 0 14px; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
           padding: 14px; margin-bottom: 12px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .hero { display: flex; align-items: center; gap: 14px; }
-  .bpm { font-size: 3.4rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
-  .bpm small { font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
-  .heart { width: 34px; height: 34px; color: var(--accent); transition: transform .12s; }
-  .heart.beat { transform: scale(1.3); }
+  .recorder { display: flex; align-items: center; gap: 16px; }
+  .swatch { width: 128px; height: 128px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
+            background: #3a3f47; color: #fff; font-size: 1.9rem; font-weight: 700;
+            font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0,0,0,.5);
+            border: 3px solid var(--line); }
+  .swatch small { display: block; font-size: .75rem; font-weight: 500; text-align: center; }
+  .side { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; min-width: 0; }
+  .preview { width: 64px; height: 64px; aspect-ratio: 1; flex: 0 0 auto; border-radius: 50%; object-fit: cover;
+             border: 2px solid var(--line); background: #000; }
+  .progress { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 12px; }
+  .progress div { height: 100%; width: 0; background: var(--accent); }
   .status { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); }
   .dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--accent); }
-  canvas#plot { width: 100%; height: 160px; display: block; background: transparent; }
-  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+  .bpm { font-size: 3.2rem; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .bpm small { font-size: 1rem; font-weight: 500; color: var(--muted); margin-left: 4px; }
+  canvas { width: 100%; display: block; }
+  canvas#plotAll { height: 130px; } canvas#plotRate { height: 100px; }
+  .plotlabel { font-size: .75rem; color: var(--muted); margin: 10px 0 2px; }
+  .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
   .stat { background: var(--bg); border-radius: 10px; padding: 8px; text-align: center; }
   .stat b { display: block; font-size: 1.15rem; font-variant-numeric: tabular-nums; }
   .stat span { font-size: .75rem; color: var(--muted); }
@@ -41,36 +52,34 @@
                    background: var(--card); color: var(--text); padding: 10px 14px; }
   button.primary { background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 600; flex: 1; }
   button:disabled { opacity: .45; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .tabs button { padding: 7px 11px; font-size: .85rem; }
+  .tabs button.on { background: var(--accent-soft); border-color: var(--accent); }
+  pre { background: var(--code); border: 1px solid var(--line); border-radius: 10px; padding: 10px;
+        font-size: .72rem; line-height: 1.45; overflow-x: auto; white-space: pre; margin: 0 0 8px; }
   label { font-size: .9rem; color: var(--muted); }
-  .preview { width: 76px; height: 76px; aspect-ratio: 1; flex: 0 0 auto; border-radius: 50%; object-fit: cover;
-             border: 2px solid var(--line);
-             background: #000; margin-left: auto; }
   details { font-size: .9rem; color: var(--muted); }
   details li { margin: 4px 0; }
   .note { font-size: .8rem; color: var(--muted); }
   .err { color: var(--accent); font-size: .9rem; }
+  [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main>
   <h1>Camera Pulse</h1>
-  <p class="sub">Measures the pulse wave (PPG) through your fingertip with the phone camera and flash. Data stays on this device.</p>
+  <p class="sub">Records the pulse wave (PPG) through your fingertip with the phone camera and flash, then
+    evaluates it. Data stays on this device.</p>
 
   <div class="card">
-    <div class="hero">
-      <svg class="heart" id="heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
-        <path d="M12 21s-7.5-4.6-9.6-9.3C.9 8.3 3 4.5 6.7 4.5c2.1 0 3.6 1.2 4.3 2.4.7-1.2 2.2-2.4 4.3-2.4 3.7 0 5.8 3.8 4.3 7.2C19.5 16.4 12 21 12 21z"/>
-      </svg>
-      <div>
-        <div class="bpm"><span id="bpm">--</span><small>BPM</small></div>
+    <div class="recorder">
+      <div class="swatch" id="swatch"><div><span id="count">--</span><small id="countLabel">ready</small></div></div>
+      <div class="side">
+        <video id="video" class="preview" playsinline muted autoplay></video>
         <div class="status"><span class="dot" id="dot"></span><span id="status">Press Start</span></div>
       </div>
-      <video id="video" class="preview" playsinline muted autoplay></video>
     </div>
-  </div>
-
-  <div class="card">
-    <canvas id="plot"></canvas>
+    <div class="progress"><div id="bar"></div></div>
   </div>
 
   <div class="card">
@@ -84,8 +93,6 @@
         <option value="30">30 s</option>
         <option value="60" selected>60 s</option>
         <option value="120">2 min</option>
-        <option value="300">5 min</option>
-        <option value="0">until stopped</option>
       </select>
       <label for="camera">Camera</label>
       <select id="camera" disabled><option>default</option></select>
@@ -96,16 +103,36 @@
     <p class="err" id="error" hidden></p>
   </div>
 
-  <div class="card">
+  <div class="card" id="results" hidden>
+    <h2>Result</h2>
+    <div class="bpm"><span id="bpm">--</span><small>BPM (mean)</small></div>
+    <p class="note" id="quality" style="margin:6px 0 0"></p>
+    <div class="plotlabel">Whole recording: pulse wave, green dots = accepted beats, orange = rejected</div>
+    <canvas id="plotAll"></canvas>
+    <div class="plotlabel">Heart rate beat by beat (BPM)</div>
+    <canvas id="plotRate"></canvas>
     <div class="stats">
       <div class="stat"><b id="sTime">0</b><span>seconds</span></div>
       <div class="stat"><b id="sBeats">0</b><span>beats</span></div>
       <div class="stat"><b id="sFps">0</b><span>frames / s</span></div>
-      <div class="stat"><b id="sMean">--</b><span>mean BPM</span></div>
+      <div class="stat"><b id="sMin">--</b><span>min BPM</span></div>
       <div class="stat"><b id="sSdnn">--</b><span>SDNN (ms)</span></div>
       <div class="stat"><b id="sRmssd">--</b><span>RMSSD (ms)</span></div>
     </div>
-    <p class="note" id="engine" style="margin: 8px 0 0"></p>
+  </div>
+
+  <div class="card" id="messages" hidden>
+    <h2>The same measurement as a message</h2>
+    <p class="note" style="margin:0 0 10px">How a device or system would send this result to another system.
+      Values come from your recording; the patient is a placeholder.</p>
+    <div class="tabs">
+      <button data-fmt="ble" class="on">Bluetooth</button>
+      <button data-fmt="fhir">FHIR</button>
+      <button data-fmt="hl7">HL7 v2</button>
+    </div>
+    <pre id="msgText"></pre>
+    <p class="note" id="msgNote" style="margin:0 0 8px"></p>
+    <button id="copyBtn">Copy</button>
   </div>
 
   <div class="card">
@@ -113,7 +140,8 @@
       <button id="dlSignal" disabled>Download signal CSV</button>
       <button id="dlBeats" disabled>Download beats CSV</button>
     </div>
-    <p class="note">Signal CSV: every camera frame (time, mean red/green/blue, filtered pulse wave). Beats CSV: time of each detected beat, interval to the previous beat (RR) and instantaneous BPM.</p>
+    <p class="note">Signal CSV: the recording resampled to a fixed rate (time, mean red/green/blue,
+      filtered pulse wave). Beats CSV: time of each detected beat, interval to the previous beat (RR) and BPM.</p>
   </div>
 
   <details class="card">
@@ -122,9 +150,13 @@
       <li>Press <b>Start</b> and allow camera access. The camera preview and the flash turn on.</li>
       <li>Cover the <b>rear camera and the flash</b> with your fingertip. The preview should turn evenly red.</li>
       <li>Press lightly. Pressing hard pushes the blood out and the signal disappears.</li>
-      <li>Rest your hand and the phone on a table and keep still. Measuring starts by itself after the finger has been still for 2 seconds.</li>
-      <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's flashlight through your finger.</li>
+      <li>Rest your hand and the phone on a table and keep still. Recording starts by itself after the
+        finger has been still for 2 seconds. The circle pulses with the brightness of your finger.</li>
+      <li>When the time is up, the recording is evaluated and the result appears below.</li>
+      <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's
+        flashlight through your finger.</li>
     </ol>
+    <p class="note" id="engine"></p>
     <p class="note">For teaching purposes only. Not a medical device.</p>
   </details>
 </main>
@@ -289,7 +321,7 @@ class PulseProcessor {
 /* ===== Browser part ===== */
 if (typeof document !== "undefined") (() => {
   const $ = id => document.getElementById(id);
-  const video = $("video"), plot = $("plot"), pctx = plot.getContext("2d");
+  const video = $("video");
   // Small canvas for averaging the image. Without willReadFrequently it stays on the GPU,
   // so drawImage scales the camera frame there and only 32x24 pixels are read back.
   const grab = document.createElement("canvas"); grab.width = 32; grab.height = 24;
@@ -415,12 +447,13 @@ if (typeof document !== "undefined") (() => {
     if (fmt) frameFmt = fmt;
   }
 
-  const SETTLE = 2;              // seconds of steady finger contact before measuring starts
+  const SETTLE = 2;              // seconds of steady finger contact before recording starts
   const proc = new PulseProcessor();
   let stream = null, track = null, torchOn = false, wakeLock = null, recordedAt = null;
-  let state = "idle";            // idle -> preview (waiting for the finger) -> measuring
+  let state = "idle";            // idle -> preview (waiting for the finger) -> recording -> idle
   let clock = null, base = 0, lastT = -1, fingerSince = null, lastMediaTime = -1;
-  let colors = {}, plotW = 0, plotH = 0, plotDirty = false, lastUI = -1;
+  let rec = { t: [], r: [], g: [], b: [], finger: 0 }, duration = 60, result = null;
+  let swatchDirty = false, colors = {};
 
   const text = (id, value) => { const e = $(id); const v = String(value); if (e.textContent !== v) e.textContent = v; };
   function setStatus(msg, level) {
@@ -429,18 +462,11 @@ if (typeof document !== "undefined") (() => {
     if ($("dot").className !== cls) $("dot").className = cls;
   }
   function showError(msg) { const e = $("error"); e.textContent = msg; e.hidden = !msg; }
-
   function readColors() {
     const css = getComputedStyle(document.documentElement);
     colors = { line: css.getPropertyValue("--line"), accent: css.getPropertyValue("--accent"),
-               ok: css.getPropertyValue("--ok"), warn: css.getPropertyValue("--warn") };
-  }
-  function resizePlot() {
-    const dpr = Math.min(2, window.devicePixelRatio || 1);    // 2x is sharp enough for a line plot
-    plotW = plot.clientWidth; plotH = plot.clientHeight;
-    plot.width = Math.round(plotW * dpr); plot.height = Math.round(plotH * dpr);
-    pctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    plotDirty = true;
+               ok: css.getPropertyValue("--ok"), warn: css.getPropertyValue("--warn"),
+               muted: css.getPropertyValue("--muted") };
   }
 
   // Each applyConstraints call replaces the previous one, so the torch and the camera
@@ -608,18 +634,22 @@ if (typeof document !== "undefined") (() => {
                    `R ${r} G ${g} B ${b}` + (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
   }
 
+  // ----- Recording: only store the averaged colour of every frame -----
+  // Nothing is evaluated while recording, so the phone only has to read the camera.
+  // The pulse wave is processed after the recording has finished.
+
   function handleSample(ts, r, g, b) {
     const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
     rgbNow = [r, g, b];
     showEngine(ts);
 
     if (state === "preview") {
-      // Wait until the finger has covered the camera steadily, then start the clock
+      // Wait until the finger has covered the camera steadily, then start recording
       if (!finger) {
         fingerSince = null;
         setStatus("Cover the camera and flash with your fingertip", "bad");
         if (lockState === "done" && Object.keys(camLock).length) {
-          lockState = "off";            // do not try again during this measurement
+          lockState = "off";            // do not try again during this recording
           unlockCamera("lock undone: the finger was not visible with locked exposure");
         }
         return;
@@ -636,77 +666,213 @@ if (typeof document !== "undefined") (() => {
       if (lockState === "pending") { setStatus("Finger detected – setting up the camera…", "warn"); return; }
       if (lockedAt === null) lockedAt = ts;      // after locking, give the camera 1 s
       if (ts - lockedAt < 1) { setStatus("Finger detected – keep still, starting…", "warn"); return; }
-      state = "measuring"; base = ts; lastT = -1; proc.reset(); recordedAt = new Date();
-      setStatus("Finger detected – keep still…", "warn");
+      state = "recording"; base = ts; lastT = -1; recordedAt = new Date();
+      rec = { t: [], r: [], g: [], b: [], finger: 0 };
+      setStatus("Recording – keep still", "ok");
     }
 
     const t = ts - base;
     if (t <= lastT) return;          // out-of-order or repeated timestamp
     lastT = t;
-    const beat = proc.add(t, r, g, b);
-    if (beat && beat.valid) {
-      const h = $("heart"); h.classList.add("beat"); setTimeout(() => h.classList.remove("beat"), 120);
-    }
-    plotDirty = true;
-    if (t - lastUI >= 0.25) { lastUI = t; updateUI(t); }
-    const dur = +$("duration").value;
-    if (dur && t >= dur) stop(true);
+    rec.t.push(t); rec.r.push(r); rec.g.push(g); rec.b.push(b);
+    if (finger) rec.finger++;
+    swatchDirty = true;
+    if (t >= duration) stop(true);
   }
+
+  // The circle shows the brightness of the finger, stretched to the range of the last
+  // 2 seconds, so the small changes caused by the pulse become visible. Updated at most
+  // once per screen refresh.
+  function swatchLoop() {
+    if (swatchDirty && state === "recording") {
+      swatchDirty = false;
+      const n = rec.t.length, tNow = rec.t[n - 1];
+      let lo = Infinity, hi = -Infinity;
+      for (let i = n - 1; i >= 0 && rec.t[i] > tNow - 2; i--) { lo = Math.min(lo, rec.r[i]); hi = Math.max(hi, rec.r[i]); }
+      // more blood = darker image; the circle gets brighter with every beat
+      const level = hi - lo > 0.05 ? (hi - rec.r[n - 1]) / (hi - lo) : 0.5;
+      $("swatch").style.background = `hsl(0, 85%, ${Math.round(22 + 38 * level)}%)`;
+      const left = Math.max(0, Math.ceil(duration - tNow));
+      text("count", left); text("countLabel", "s left");
+      $("bar").style.width = (100 * Math.min(1, tNow / duration)).toFixed(1) + "%";
+      if (rec.t.length > 20 && rgbNow[0] <= 60) setStatus("Finger lost – put it back on the camera", "bad");
+      else setStatus("Recording – keep still", "ok");
+    }
+    requestAnimationFrame(swatchLoop);
+  }
+
+  // ----- Evaluation after the recording -----
+
+  function analyze() {
+    proc.reset();
+    for (let i = 0; i < rec.t.length; i++) proc.add(rec.t[i], rec.r[i], rec.g[i], rec.b[i]);
+    const s = proc.summary();
+    const valid = proc.beats.filter(x => x.valid);
+    const dur = rec.t[rec.t.length - 1] || 0;
+    const fps = rec.t.length / Math.max(dur, 1e-9);
+    const fingerShare = rec.finger / Math.max(1, rec.t.length);
+    const accepted = proc.beats.length ? valid.length / proc.beats.length : 0;
+    result = { s, valid, dur, fps, fingerShare, accepted };
+
+    $("results").hidden = false;
+    text("bpm", s ? Math.round(s.meanBpm) : "--");
+    text("sTime", Math.round(dur));
+    text("sBeats", valid.length);
+    text("sFps", Math.round(fps));
+    const rates = valid.map(x => x.bpm);
+    text("sMin", rates.length ? Math.round(Math.min(...rates)) : "--");
+    text("sSdnn", s ? Math.round(s.sdnn) : "--");
+    text("sRmssd", s ? Math.round(s.rmssd) : "--");
+    let q = `Finger on the camera ${Math.round(100 * fingerShare)} % of the time, ` +
+            `${Math.round(100 * accepted)} % of detected beats accepted.`;
+    if (!s) q += " Not enough clean beats for a result – try again and keep still.";
+    else if (accepted < 0.7 || fingerShare < 0.9) q += " The signal was noisy, treat the result with caution.";
+    text("quality", q);
+    resizePlots();
+    drawAll(); drawRate();
+    $("dlSignal").disabled = $("dlBeats").disabled = false;
+    if (s) { $("messages").hidden = false; showMessage(currentFmt); }
+  }
+
+  function setupCanvas(c) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    const W = c.clientWidth, H = c.clientHeight;
+    c.width = Math.round(W * dpr); c.height = Math.round(H * dpr);
+    const ctx = c.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, W, H };
+  }
+  function resizePlots() { if (result) { drawAll(); drawRate(); } }
+
+  function drawAll() {
+    const { ctx, W, H } = setupCanvas($("plotAll"));
+    ctx.clearRect(0, 0, W, H);
+    const n = proc.t.length; if (n < 2) return;
+    const tEnd = proc.t[n - 1], pad = 8;
+    // robust vertical range (ignore the start-up transient of the filter)
+    const v = proc.sig.slice(Math.min(n - 1, 60)).slice().sort((a, b) => a - b);
+    let lo = v[Math.floor(0.01 * v.length)], hi = v[Math.floor(0.99 * v.length)];
+    if (!(hi > lo)) { lo -= 1; hi += 1; }
+    const X = t => t / tEnd * W, Y = y => H - pad - (Math.min(hi, Math.max(lo, y)) - lo) / (hi - lo) * (H - 2 * pad);
+    ctx.strokeStyle = colors.line; ctx.lineWidth = 1; ctx.beginPath();
+    for (let s = 10; s < tEnd; s += 10) { ctx.moveTo(X(s), 0); ctx.lineTo(X(s), H); }
+    ctx.stroke();
+    ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.2; ctx.beginPath();
+    const step = Math.max(1, Math.floor(n / (2 * W)));
+    for (let i = 0; i < n; i += step) { const x = X(proc.t[i]), y = Y(proc.sig[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }
+    ctx.stroke();
+    for (const bt of proc.beats) {
+      const i = Math.min(n - 1, proc.idxAt(bt.t));
+      ctx.fillStyle = bt.valid ? colors.ok : colors.warn;
+      ctx.beginPath(); ctx.arc(X(bt.t), Y(proc.sig[i]), 2.5, 0, 2 * Math.PI); ctx.fill();
+    }
+  }
+
+  function drawRate() {
+    const { ctx, W, H } = setupCanvas($("plotRate"));
+    ctx.clearRect(0, 0, W, H);
+    const pts = result.valid, n = proc.t.length;
+    if (pts.length < 2 || n < 2) return;
+    const tEnd = proc.t[n - 1], pad = 14;
+    let lo = Math.min(...pts.map(p => p.bpm)), hi = Math.max(...pts.map(p => p.bpm));
+    lo = Math.floor(lo / 10) * 10; hi = Math.ceil(hi / 10) * 10; if (hi - lo < 20) hi = lo + 20;
+    const X = t => t / tEnd * W, Y = b => H - pad - (b - lo) / (hi - lo) * (H - 2 * pad);
+    ctx.fillStyle = colors.muted; ctx.font = "11px system-ui, sans-serif";
+    ctx.fillText(hi, 2, Y(hi) + 4); ctx.fillText(lo, 2, Y(lo) + 4);
+    ctx.strokeStyle = colors.line; ctx.lineWidth = 1; ctx.beginPath();
+    ctx.moveTo(24, Y(hi)); ctx.lineTo(W, Y(hi)); ctx.moveTo(24, Y(lo)); ctx.lineTo(W, Y(lo)); ctx.stroke();
+    ctx.strokeStyle = colors.accent; ctx.lineWidth = 1.5; ctx.beginPath();
+    pts.forEach((p, i) => { const x = X(p.t), y = Y(p.bpm); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  }
+
+  // ----- The result as messages in different standards -----
+
+  const pad2 = x => String(x).padStart(2, "0");
+  function isoLocal(d) {
+    const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-";
+    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:` +
+           `${pad2(d.getMinutes())}:${pad2(d.getSeconds())}${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+  }
+  const hl7Time = d => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  const hex = n => n.toString(16).toUpperCase().padStart(2, "0");
+
+  function bleMessage() {
+    // Bluetooth Heart Rate Measurement characteristic (0x2A37), as a chest strap or watch sends it
+    const bpm = Math.round(result.s.meanBpm);
+    const rr = result.valid.slice(-4).map(x => Math.round(x.rr * 1024 / 1000));   // unit 1/1024 s
+    const flags = 0x16;           // bit 1-2: sensor contact supported and detected, bit 4: RR present
+    const bytes = [flags, bpm];
+    rr.forEach(v => bytes.push(v & 0xff, v >> 8));
+    const lines = [
+      "Bluetooth LE, Heart Rate Service, characteristic 0x2A37",
+      "Notification (" + bytes.length + " bytes):",
+      "",
+      "  " + bytes.map(hex).join(" "),
+      "",
+      `  ${hex(flags)}       flags: HR as 1 byte, sensor contact detected, RR intervals present`,
+      `  ${hex(bpm)}       heart rate = ${bpm} /min`,
+    ];
+    rr.forEach(v => lines.push(`  ${hex(v & 0xff)} ${hex(v >> 8)}    RR = 0x${hex(v >> 8)}${hex(v & 0xff)} = ${v}/1024 s = ${Math.round(v * 1000 / 1024)} ms`));
+    return { text: lines.join("\n"),
+             note: "The device sends raw numbers without units or codes. The receiving app must know the " +
+                   "GATT specification to decode them (byte order little endian, RR in 1/1024 s)." };
+  }
+
+  function fhirMessage() {
+    const s = result.s, start = recordedAt, end = new Date(recordedAt.getTime() + result.dur * 1000);
+    const obs = {
+      resourceType: "Observation",
+      status: "final",
+      category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category",
+                              code: "vital-signs", display: "Vital Signs" }] }],
+      code: { coding: [{ system: "http://loinc.org", code: "8867-4", display: "Heart rate" }] },
+      subject: { reference: "Patient/example", display: "Test Student" },
+      effectivePeriod: { start: isoLocal(start), end: isoLocal(end) },
+      valueQuantity: { value: Math.round(s.meanBpm), unit: "beats/minute",
+                       system: "http://unitsofmeasure.org", code: "/min" },
+      device: { display: "Camera Pulse (phone camera, PPG)" },
+      component: [{
+        code: { coding: [{ system: "http://loinc.org", code: "80404-7",
+                           display: "R-R interval.standard deviation (Heart rate variability)" }] },
+        valueQuantity: { value: Math.round(s.sdnn), unit: "ms", system: "http://unitsofmeasure.org", code: "ms" }
+      }]
+    };
+    return { text: JSON.stringify(obs, null, 2),
+             note: "FHIR R4 resource Observation in JSON. The value has a unit from UCUM and a LOINC code, so " +
+                   "any FHIR server understands it. Send it with POST to [server]/Observation." };
+  }
+
+  function hl7Message() {
+    const s = result.s, now = new Date(), id = "MSG" + hl7Time(now);
+    const t = hl7Time(recordedAt);
+    const seg = [
+      `MSH|^~\\&|CAMERAPULSE|FRI_UNIZA|NIS|NEMOCNICA|${hl7Time(now)}||ORU^R01^ORU_R01|${id}|P|2.5.1`,
+      `PID|1||123456^^^NEMOCNICA^MR||Student^Test||20000101|U`,
+      `OBR|1||${id}|8867-4^Heart rate^LN|||${t}`,
+      `OBX|1|NM|8867-4^Heart rate^LN||${Math.round(s.meanBpm)}|/min^beats per minute^UCUM|60-100|${s.meanBpm > 100 || s.meanBpm < 60 ? "A" : "N"}|||F|||${t}`,
+      `OBX|2|NM|80404-7^R-R interval.standard deviation^LN||${Math.round(s.sdnn)}|ms^millisecond^UCUM||||F|||${t}`,
+    ];
+    return { text: seg.join("\n"),
+             note: "HL7 v2.5.1 message ORU^R01 (observation result). Segments are separated by carriage " +
+                   "returns, fields by |, components by ^. The receiver answers with an ACK message " +
+                   `(MSA|AA|${id} = accepted).` };
+  }
+
+  let currentFmt = "ble", currentText = "";
+  function showMessage(fmt) {
+    currentFmt = fmt;
+    document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.fmt === fmt));
+    const m = { ble: bleMessage, fhir: fhirMessage, hl7: hl7Message }[fmt]();
+    currentText = m.text;
+    $("msgText").textContent = m.text;
+    text("msgNote", m.note);
+  }
+
+  // ----- Start and stop -----
 
   function schedule() {
     if (video.requestVideoFrameCallback) video.requestVideoFrameCallback(readFrame);
     else requestAnimationFrame(now => readFrame(now, null));
-  }
-
-  function updateUI(t) {
-    const n = proc.t.length, finger = n && proc.finger[n - 1];
-    const bpm = proc.currentBPM();
-    let recent = 0, valid = 0;
-    for (const x of proc.beats) if (x.valid) { valid++; if (x.t > t - 5) recent++; }
-    if (!finger) setStatus("Cover the camera and flash with your fingertip", "bad");
-    else if (recent < 2) setStatus("Finger detected – keep still…", "warn");
-    else setStatus("Measuring", "ok");
-    text("bpm", bpm && finger && recent >= 2 ? Math.round(bpm) : "--");
-    text("sTime", Math.floor(t));
-    text("sBeats", valid);
-    text("sFps", Math.round(proc.fps()));
-    const s = proc.summary();
-    text("sMean", s ? Math.round(s.meanBpm) : "--");
-    text("sSdnn", s ? Math.round(s.sdnn) : "--");
-    text("sRmssd", s ? Math.round(s.rmssd) : "--");
-  }
-
-  // The plot is redrawn at most once per screen refresh, independently of the camera
-  function plotLoop() {
-    if (plotDirty) { plotDirty = false; drawPlot(); }
-    requestAnimationFrame(plotLoop);
-  }
-
-  function drawPlot() {
-    const W = plotW, H = plotH;
-    pctx.clearRect(0, 0, W, H);
-    const n = proc.t.length; if (n < 2) return;
-    const span = 6, tEnd = proc.t[n - 1], tStart = tEnd - span;
-    const a = proc.idxAt(tStart);
-    let lo = Infinity, hi = -Infinity;
-    for (let i = a; i < n; i++) { lo = Math.min(lo, proc.sig[i]); hi = Math.max(hi, proc.sig[i]); }
-    if (hi - lo < 1e-6) { hi += 1; lo -= 1; }
-    const pad = 12;
-    const X = tt => (tt - tStart) / span * W;
-    const Y = v => H - pad - (v - lo) / (hi - lo) * (H - 2 * pad);
-    pctx.strokeStyle = colors.line; pctx.lineWidth = 1; pctx.beginPath();
-    for (let s = Math.ceil(tStart); s < tEnd; s++) { pctx.moveTo(X(s), 0); pctx.lineTo(X(s), H); }
-    pctx.stroke();
-    pctx.strokeStyle = colors.accent; pctx.lineWidth = 2; pctx.beginPath();
-    for (let i = a; i < n; i++) { const x = X(proc.t[i]), y = Y(proc.sig[i]); i === a ? pctx.moveTo(x, y) : pctx.lineTo(x, y); }
-    pctx.stroke();
-    for (let k = proc.beats.length - 1; k >= 0; k--) {     // only the beats on screen
-      const bt = proc.beats[k];
-      if (bt.t < tStart) break;
-      const i = Math.min(n - 1, proc.idxAt(bt.t));
-      pctx.fillStyle = bt.valid ? colors.ok : colors.warn;
-      pctx.beginPath(); pctx.arc(X(bt.t), Y(proc.sig[i]), 4, 0, 2 * Math.PI); pctx.fill();
-    }
   }
 
   async function start() {
@@ -725,35 +891,43 @@ if (typeof document !== "undefined") (() => {
       setStatus("Camera not available", "bad");
       return;
     }
-    proc.reset(); plotDirty = true;
-    state = "preview"; clock = null; fingerSince = null; lastUI = -1; lastMediaTime = -1;
-    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = ""; lastEngine = -Infinity;
-    text("startBtn", "Stop");
+    duration = +$("duration").value;
+    result = null; rec = { t: [], r: [], g: [], b: [], finger: 0 };
+    $("results").hidden = $("messages").hidden = true;
     $("dlSignal").disabled = $("dlBeats").disabled = true;
-    ["bpm", "sMean", "sSdnn", "sRmssd"].forEach(id => text(id, "--"));
-    ["sTime", "sBeats", "sFps"].forEach(id => text(id, 0));
+    state = "preview"; clock = null; fingerSince = null; lastMediaTime = -1;
+    camLock = {}; lockState = "none"; lockedAt = null; lockInfo = ""; lastEngine = -Infinity;
+    text("startBtn", "Stop"); text("count", duration); text("countLabel", "s");
+    $("bar").style.width = "0%"; $("swatch").style.background = "";
     setStatus("Cover the camera and flash with your fingertip", "bad");
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { /* optional */ }
     startCapture();
   }
 
   async function stop(finished) {
-    const measured = state === "measuring";
+    const recorded = state === "recording";
     state = "idle";
     stopWorker();
     await setTorch(false);
     if (stream) stream.getTracks().forEach(t => t.stop());
-    stream = null; track = null;
+    stream = null; track = null; video.srcObject = null;
     $("torchBtn").disabled = true;
     try { await wakeLock?.release(); } catch (e) { /* ignore */ }
     text("startBtn", "Start");
-    const has = measured && proc.t.length > 0;
-    $("dlSignal").disabled = $("dlBeats").disabled = !has;
-    if (has) updateUI(proc.t[proc.t.length - 1]);
-    plotDirty = true;
-    setStatus(finished ? "Done – download the data below" : "Stopped", finished ? "ok" : "");
-    const s = proc.summary();
-    text("bpm", s ? Math.round(s.meanBpm) : "--");
+    $("swatch").style.background = "";
+    const dur = recorded && rec.t.length ? rec.t[rec.t.length - 1] : 0;
+    if (dur < 10) {
+      text("count", "--"); text("countLabel", "ready");
+      setStatus(recorded ? "Recording too short (at least 10 s) – try again" : "Stopped", recorded ? "bad" : "");
+      return;
+    }
+    text("count", "✓"); text("countLabel", "done");
+    setStatus("Evaluating…", "warn");
+    await new Promise(r => setTimeout(r, 30));        // let the page show the message first
+    analyze();
+    setStatus(finished ? "Done – see the result below" : "Stopped early – result from the recorded part",
+              result.s ? "ok" : "bad");
+    $("results").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   function download(name, csv) {
@@ -764,8 +938,8 @@ if (typeof document !== "undefined") (() => {
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
   function stamp() {
-    const d = recordedAt || new Date(), p = x => String(x).padStart(2, "0");
-    return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
+    const d = recordedAt || new Date();
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
   }
 
   $("startBtn").onclick = () => state === "idle" ? start() : stop(false);
@@ -777,12 +951,18 @@ if (typeof document !== "undefined") (() => {
     try { await openCamera($("camera").value); if (useWorker) startWorker(); }
     catch (e) { showError("Could not switch camera: " + e.message); }
   };
+  document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showMessage(b.dataset.fmt));
+  $("copyBtn").onclick = async () => {
+    try { await navigator.clipboard.writeText(currentText); text("copyBtn", "Copied"); }
+    catch (e) { text("copyBtn", "Copy failed"); }
+    setTimeout(() => text("copyBtn", "Copy"), 1500);
+  };
   $("dlSignal").onclick = () => download(`ppg-signal-${stamp()}.csv`, proc.signalCSV());
   $("dlBeats").onclick = () => download(`ppg-beats-${stamp()}.csv`, proc.beatsCSV());
   document.addEventListener("visibilitychange", () => { if (document.hidden && state !== "idle") stop(false); });
-  window.addEventListener("resize", resizePlot);
-  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); plotDirty = true; });
-  readColors(); resizePlot(); plotLoop();
+  window.addEventListener("resize", resizePlots);
+  window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); resizePlots(); });
+  readColors(); swatchLoop();
 })();
 
 if (typeof module !== "undefined") module.exports = { PulseProcessor };

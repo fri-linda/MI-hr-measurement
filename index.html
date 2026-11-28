@@ -91,6 +91,10 @@
       <button class="primary" id="startBtn">Start</button>
       <button id="torchBtn" disabled>Flash: off</button>
     </div>
+    <div class="row" style="margin-bottom:10px">
+      <button id="videoBtn" style="flex:1">Analyze a video</button>
+      <input type="file" id="videoFile" accept="video/*" hidden>
+    </div>
     <div class="row">
       <label for="duration">Duration</label>
       <select id="duration">
@@ -155,7 +159,10 @@
       <li>Press lightly. Pressing hard pushes the blood out and the signal disappears.</li>
       <li>Rest your hand and the phone on a table and keep still. Recording starts by itself after the
         finger has been still for 2 seconds. The circle shows the camera and the time left.</li>
-      <li>When the time is up, the recording is evaluated and the result appears below.</li>
+      <li>The page records a short video and evaluates it afterwards; the result appears below.</li>
+      <li><b>Analyze a video</b>: record 20 to 30 s with the phone's camera app instead (video mode,
+        flash on, finger on the camera) and choose the file. The first second with a steady finger
+        is skipped automatically.</li>
       <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's
         flashlight through your finger.</li>
     </ol>
@@ -617,14 +624,14 @@ if (typeof document !== "undefined") (() => {
   }
 
   function readFrame(now, md) {
-    if (state === "idle") return;
+    if (state !== "preview") return;
     if (video.readyState >= 2) {
       // Without requestVideoFrameCallback the same frame may come twice: skip it
       const fresh = md || video.currentTime !== lastMediaTime;
       lastMediaTime = video.currentTime;
       if (fresh) handleFrame(frameTime(now, md));
     }
-    if (state !== "idle") schedule();
+    if (state === "preview") schedule();
   }
 
   function handleFrame(ts) {
@@ -659,7 +666,7 @@ if (typeof document !== "undefined") (() => {
       if (m.error) { showError("Frame processing failed: " + m.error); return; }
       noteTiming(m.ms, m.fmt); lagMs = m.lag; workerMethod = m.method;
       const b = m.batch;
-      for (let i = 0; i < b.length && state !== "idle"; i += 4) handleSample(b[i], b[i + 1], b[i + 2], b[i + 3]);
+      for (let i = 0; i < b.length && state === "preview"; i += 4) handleSample(b[i], b[i + 1], b[i + 2], b[i + 3]);
     };
   }
   function stopWorker() {
@@ -765,31 +772,133 @@ if (typeof document !== "undefined") (() => {
       if (lockState === "pending") { setStatus("Finger detected – setting up the camera…", "warn"); return; }
       if (lockedAt === null) lockedAt = ts;      // after locking, give the camera 1 s
       if (ts - lockedAt < 1) { setStatus("Finger detected – keep still, starting…", "warn"); return; }
-      state = "recording"; base = ts; lastT = -1; recordedAt = new Date();
-      rec = { t: [], r: [], g: [], b: [], finger: 0 };
-      setStatus("Recording – keep still", "ok");
+      startRecording();
     }
-
-    const t = ts - base;
-    if (t <= lastT) return;          // out-of-order or repeated timestamp
-    lastT = t;
-    rec.t.push(t); rec.r.push(r); rec.g.push(g); rec.b.push(b);
-    if (finger) rec.finger++;
-    if (t >= duration) stop(true);
   }
 
   // Countdown and progress ring, updated at most 10 times per second
   let lastUiUpdate = 0;
   function uiLoop(now) {
-    if (state === "recording" && rec.t.length && now - lastUiUpdate > 100) {
+    if (state === "recording" && now - lastUiUpdate > 100) {
       lastUiUpdate = now;
-      const tNow = rec.t[rec.t.length - 1];
+      const tNow = (now - recStart) / 1000;
       text("count", Math.max(0, Math.ceil(duration - tNow))); text("countLabel", "s left");
       $("ring").style.strokeDashoffset = (552.9 * (1 - Math.min(1, tNow / duration))).toFixed(1);
-      if (rgbNow[0] <= 60) setStatus("Finger lost – put it back on the camera", "bad");
-      else setStatus("Recording – keep still", "ok");
     }
     requestAnimationFrame(uiLoop);
+  }
+
+  // ----- Recording a video -----
+  // Reading live camera frames in JavaScript is unreliable on some phones (the browser
+  // delivers only a few frames per second although the camera runs at 30). So the page
+  // records a video, which the phone encodes natively at the full frame rate, and reads
+  // every frame of it afterwards, when there is no time pressure.
+  let recorder = null, chunks = [], recStart = 0, recTimer = null, recDone = null;
+  function startRecording() {
+    stopWorker();                                   // no live frame reading while recording
+    const types = ["video/webm;codecs=vp8", "video/webm", "video/mp4"];
+    const mimeType = types.find(x => window.MediaRecorder && MediaRecorder.isTypeSupported(x));
+    if (!window.MediaRecorder || !mimeType) {
+      showError("This browser cannot record video. Use \"Analyze a video\" with the camera app instead.");
+      stop(false); return;
+    }
+    chunks = [];
+    recorder = new MediaRecorder(stream, { mimeType, videoBitsPerSecond: 4000000 });
+    recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+    recDone = new Promise(res => { recorder.onstop = () => res(new Blob(chunks, { type: mimeType })); });
+    recorder.start();
+    state = "recording"; recStart = performance.now(); recordedAt = new Date();
+    setStatus("Recording – keep still", "ok");
+    recTimer = setTimeout(() => stop(true), duration * 1000 + 300);
+  }
+
+  // Plays the video and reads every frame (its own timestamp, mean colour of the centre).
+  // If the browser skips frames during playback, it is played again more slowly.
+  const vgrab = document.createElement("canvas"); vgrab.width = 32; vgrab.height = 24;
+  const vctx = vgrab.getContext("2d", { alpha: false, willReadFrequently: true });
+  async function readVideo(blob, fromFile, rate = 1) {
+    const v = document.createElement("video");
+    v.muted = true; v.playsInline = true; v.preload = "auto";
+    v.style.cssText = "position:fixed;left:0;top:0;width:4px;height:4px;opacity:0;pointer-events:none";
+    document.body.appendChild(v);
+    const url = URL.createObjectURL(blob);
+    v.src = url;
+    try {
+      await new Promise((res, rej) => { v.onloadeddata = res; v.onerror = () => rej(new Error("the video cannot be decoded")); });
+      if (!v.requestVideoFrameCallback) throw new Error("this browser cannot read video frames");
+      const maxDur = fromFile ? 30 : duration;
+      const out = { t: [], r: [], g: [], b: [], finger: 0, frames: 0, dropped: 0 };
+      let start = null, steady = null, lastPresented = null, lastStatus = 0;
+      await new Promise((resolve, reject) => {
+        let done = false;
+        const finish = () => { if (!done) { done = true; v.pause(); resolve(); } };
+        const onFrame = (now, md) => {
+          if (done) return;
+          if (lastPresented !== null && md.presentedFrames > lastPresented + 1) out.dropped += md.presentedFrames - lastPresented - 1;
+          lastPresented = md.presentedFrames;
+          const w = v.videoWidth, h = v.videoHeight;
+          vctx.drawImage(v, w * 0.25, h * 0.25, w * 0.5, h * 0.5, 0, 0, 32, 24);
+          const d = vctx.getImageData(0, 0, 32, 24).data;
+          let r = 0, g = 0, b = 0;
+          for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
+          r /= 768; g /= 768; b /= 768;
+          const ts = md.mediaTime, finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
+          // a video from the camera app starts before the finger is placed: wait for 1 s of steady finger
+          if (start === null) {
+            if (!fromFile) start = ts;
+            else if (!finger) steady = null;
+            else if (steady === null) steady = ts;
+            else if (ts - steady >= 1) start = ts;
+          }
+          if (start !== null) {
+            const t = ts - start;
+            if (!out.t.length || t > out.t[out.t.length - 1]) {
+              out.t.push(t); out.r.push(r); out.g.push(g); out.b.push(b); out.frames++;
+              if (finger) out.finger++;
+            }
+            if (t >= maxDur) { finish(); return; }
+          }
+          if (now - lastStatus > 250) {
+            lastStatus = now;
+            const pct = Math.min(99, Math.round(100 * (start === null ? 0 : (ts - start)) / maxDur));
+            setStatus(start === null ? "Looking for the finger in the video…" : `Evaluating the video… ${pct} %`, "warn");
+          }
+          v.requestVideoFrameCallback(onFrame);
+        };
+        v.onended = finish;
+        v.requestVideoFrameCallback(onFrame);
+        v.playbackRate = rate;
+        v.play().catch(reject);
+      });
+      if (out.dropped > 0.05 * (out.frames + out.dropped) && rate > 0.25) {
+        v.remove(); URL.revokeObjectURL(url);
+        return readVideo(blob, fromFile, rate / 2);
+      }
+      return out;
+    } finally {
+      v.remove(); URL.revokeObjectURL(url);
+    }
+  }
+
+  async function evaluateVideo(blob, fromFile) {
+    state = "evaluating";
+    text("count", "…"); text("countLabel", "evaluating");
+    setStatus("Evaluating the video…", "warn");
+    let out;
+    try { out = await readVideo(blob, fromFile); }
+    catch (e) { state = "idle"; showError("Could not read the video: " + e.message); setStatus("Evaluation failed", "bad"); return; }
+    state = "idle";
+    rec = out;
+    const dur = rec.t.length ? rec.t[rec.t.length - 1] : 0;
+    if (dur < 10) {
+      text("count", ""); text("countLabel", "");
+      setStatus(fromFile && !rec.t.length ? "No finger found in the video" : "Recording too short (at least 10 s) – try again", "bad");
+      return;
+    }
+    text("count", "✓"); text("countLabel", "done");
+    analyze();
+    setStatus("Done – see the result below", result.s ? "ok" : "bad");
+    $("results").scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
   // ----- Evaluation after the recording -----
@@ -1018,28 +1127,21 @@ if (typeof document !== "undefined") (() => {
   }
 
   async function stop(finished) {
-    const recorded = state === "recording";
+    if (state === "evaluating" || state === "idle") return;
+    const wasRecording = state === "recording";
+    clearTimeout(recTimer);
+    if (wasRecording && recorder && recorder.state !== "inactive") recorder.stop();
     state = "idle";
     stopWorker();
+    const blob = wasRecording ? await recDone : null;
     await setTorch(false);
     if (stream) stream.getTracks().forEach(t => t.stop());
     stream = null; track = null; video.srcObject = null;
     $("torchBtn").disabled = true;
     try { await wakeLock?.release(); } catch (e) { /* ignore */ }
     text("startBtn", "Start");
-    const dur = recorded && rec.t.length ? rec.t[rec.t.length - 1] : 0;
-    if (dur < 10) {
-      text("count", ""); text("countLabel", "");
-      setStatus(recorded ? "Recording too short (at least 10 s) – try again" : "Stopped", recorded ? "bad" : "");
-      return;
-    }
-    text("count", "✓"); text("countLabel", "done");
-    setStatus("Evaluating…", "warn");
-    await new Promise(r => setTimeout(r, 30));        // let the page show the message first
-    analyze();
-    setStatus(finished ? "Done – see the result below" : "Stopped early – result from the recorded part",
-              result.s ? "ok" : "bad");
-    $("results").scrollIntoView({ behavior: "smooth", block: "start" });
+    if (!blob) { text("count", ""); text("countLabel", ""); setStatus("Stopped", ""); return; }
+    await evaluateVideo(blob, false);
   }
 
   function download(name, csv) {
@@ -1055,6 +1157,15 @@ if (typeof document !== "undefined") (() => {
   }
 
   $("startBtn").onclick = () => state === "idle" ? start() : stop(false);
+  $("videoBtn").onclick = () => { if (state === "idle") $("videoFile").click(); };
+  $("videoFile").onchange = async () => {
+    const file = $("videoFile").files[0]; $("videoFile").value = "";
+    if (!file) return;
+    showError(""); result = null; recordedAt = new Date(file.lastModified || Date.now());
+    $("results").hidden = $("messages").hidden = true;
+    $("dlSignal").disabled = $("dlBeats").disabled = true;
+    await evaluateVideo(file, true);
+  };
   $("torchBtn").onclick = () => setTorch(!torchOn);
   $("camera").onchange = async () => {
     if (state === "idle") return;

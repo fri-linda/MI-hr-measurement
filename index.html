@@ -25,17 +25,18 @@
   .card { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius);
           padding: 14px; margin-bottom: 12px; }
   .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  .recorder { display: flex; align-items: center; gap: 16px; }
-  .swatch { width: 128px; height: 128px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center;
-            background: #3a3f47; color: #fff; font-size: 1.9rem; font-weight: 700;
-            font-variant-numeric: tabular-nums; text-shadow: 0 1px 3px rgba(0,0,0,.5);
-            border: 3px solid var(--line); }
-  .swatch small { display: block; font-size: .75rem; font-weight: 500; text-align: center; }
-  .side { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; min-width: 0; }
-  .preview { width: 64px; height: 64px; aspect-ratio: 1; flex: 0 0 auto; border-radius: 50%; object-fit: cover;
-             border: 2px solid var(--line); background: #000; }
-  .progress { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; margin-top: 12px; }
-  .progress div { height: 100%; width: 0; background: var(--accent); }
+  .recorder { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .cam { position: relative; width: 184px; height: 184px; }
+  .cam video { position: absolute; left: 12px; top: 12px; width: 160px; height: 160px; border-radius: 50%;
+               object-fit: cover; background: #2a2f38; }
+  .cam svg { position: absolute; inset: 0; transform: rotate(-90deg); }
+  .cam circle { fill: none; stroke-width: 6; }
+  .cam .ring-bg { stroke: var(--line); }
+  .cam .ring { stroke: var(--accent); stroke-linecap: round; }
+  .cam .overlay { position: absolute; inset: 0; display: grid; place-items: center; text-align: center;
+                  color: #fff; font-size: 2.3rem; font-weight: 700; font-variant-numeric: tabular-nums;
+                  text-shadow: 0 1px 5px rgba(0,0,0,.8); pointer-events: none; }
+  .cam .overlay small { display: block; font-size: .8rem; font-weight: 500; }
   .status { display: inline-flex; align-items: center; gap: 6px; font-size: .9rem; color: var(--muted); }
   .dot { width: 10px; height: 10px; flex: 0 0 auto; border-radius: 50%; background: var(--muted); }
   .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--accent); }
@@ -73,13 +74,16 @@
 
   <div class="card">
     <div class="recorder">
-      <div class="swatch" id="swatch"><div><span id="count">--</span><small id="countLabel">ready</small></div></div>
-      <div class="side">
-        <video id="video" class="preview" playsinline muted autoplay></video>
-        <div class="status"><span class="dot" id="dot"></span><span id="status">Press Start</span></div>
+      <div class="cam">
+        <video id="video" playsinline muted autoplay></video>
+        <svg viewBox="0 0 184 184" width="184" height="184" aria-hidden="true">
+          <circle class="ring-bg" cx="92" cy="92" r="88"/>
+          <circle class="ring" id="ring" cx="92" cy="92" r="88" stroke-dasharray="552.9" stroke-dashoffset="552.9"/>
+        </svg>
+        <div class="overlay"><div><span id="count"></span><small id="countLabel"></small></div></div>
       </div>
+      <div class="status"><span class="dot" id="dot"></span><span id="status">Press Start</span></div>
     </div>
-    <div class="progress"><div id="bar"></div></div>
   </div>
 
   <div class="card">
@@ -90,9 +94,8 @@
     <div class="row">
       <label for="duration">Duration</label>
       <select id="duration">
+        <option value="15" selected>15 s</option>
         <option value="30">30 s</option>
-        <option value="60" selected>60 s</option>
-        <option value="120">2 min</option>
       </select>
       <label for="camera">Camera</label>
       <select id="camera" disabled><option>default</option></select>
@@ -151,7 +154,7 @@
       <li>Cover the <b>rear camera and the flash</b> with your fingertip. The preview should turn evenly red.</li>
       <li>Press lightly. Pressing hard pushes the blood out and the signal disappears.</li>
       <li>Rest your hand and the phone on a table and keep still. Recording starts by itself after the
-        finger has been still for 2 seconds. The circle pulses with the brightness of your finger.</li>
+        finger has been still for 2 seconds. The circle shows the camera and the time left.</li>
       <li>When the time is up, the recording is evaluated and the result appears below.</li>
       <li>If the flash does not turn on, tap <b>Flash</b>, try another camera, or shine a second phone's
         flashlight through your finger.</li>
@@ -384,17 +387,29 @@ if (typeof document !== "undefined") (() => {
       for (let i = 0; i < d.length; i += 4) { r += d[i]; g += d[i + 1]; b += d[i + 2]; }
       return [r / 768, g / 768, b / 768];
     }
+    // Results go to the page in batches (5 per second), so the page is not woken up for
+    // every frame. lag = how much later than captured the frames are processed, relative
+    // to the start; if it keeps growing, the phone cannot keep up.
     onmessage = async e => {
       const reader = e.data.readable.getReader();
+      let batch = [], lastPost = performance.now(), ms = 0, fmt = "", now0 = null, ts0 = 0, lag = 0;
       for (;;) {
         const { value: frame, done } = await reader.read();
         if (done) break;
-        const ts = frame.timestamp / 1e6, t0 = performance.now(), fmt = frame.format;
+        const ts = frame.timestamp / 1e6, t0 = performance.now();
+        fmt = frame.format;
+        if (now0 === null) { now0 = t0; ts0 = ts; }
+        lag = Math.max(0, (t0 - now0) - (ts - ts0) * 1000);
         try {
           const [r, g, b] = await average(frame);
-          postMessage({ ts, r, g, b, ms: performance.now() - t0, fmt });
+          batch.push(ts, r, g, b);
+          ms = performance.now() - t0;
         } catch (err) { postMessage({ error: String(err) }); }
         finally { frame.close(); }
+        if (performance.now() - lastPost >= 200) {
+          postMessage({ batch, ms, fmt, lag });
+          batch = []; lastPost = performance.now();
+        }
       }
     };`;
   const useWorker = typeof MediaStreamTrackProcessor === "function" && typeof OffscreenCanvas === "function";
@@ -453,7 +468,7 @@ if (typeof document !== "undefined") (() => {
   let state = "idle";            // idle -> preview (waiting for the finger) -> recording -> idle
   let clock = null, base = 0, lastT = -1, fingerSince = null, lastMediaTime = -1;
   let rec = { t: [], r: [], g: [], b: [], finger: 0 }, duration = 60, result = null;
-  let swatchDirty = false, colors = {};
+  let colors = {};
 
   const text = (id, value) => { const e = $(id); const v = String(value); if (e.textContent !== v) e.textContent = v; };
   function setStatus(msg, level) {
@@ -559,13 +574,15 @@ if (typeof document !== "undefined") (() => {
     workerTrack = track.clone();          // the preview keeps the original track
     const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "text/javascript" }));
     worker = new Worker(url); URL.revokeObjectURL(url);
-    const readable = new MediaStreamTrackProcessor({ track: workerTrack }).readable;
+    // maxBufferSize: if the worker falls behind, old frames are dropped instead of queuing up
+    const readable = new MediaStreamTrackProcessor({ track: workerTrack, maxBufferSize: 2 }).readable;
     worker.postMessage({ readable }, [readable]);
     worker.onmessage = e => {
       const m = e.data;
       if (m.error) { showError("Frame processing failed: " + m.error); return; }
-      noteTiming(m.ms, m.fmt);
-      if (state !== "idle") handleSample(m.ts, m.r, m.g, m.b);
+      noteTiming(m.ms, m.fmt); lagMs = m.lag;
+      const b = m.batch;
+      for (let i = 0; i < b.length && state !== "idle"; i += 4) handleSample(b[i], b[i + 1], b[i + 2], b[i + 3]);
     };
   }
   function stopWorker() {
@@ -625,13 +642,13 @@ if (typeof document !== "undefined") (() => {
     lockInfo = reason;
   }
 
-  let lastEngine = -1, rgbNow = [0, 0, 0];
+  let lastEngine = -1, rgbNow = [0, 0, 0], lagMs = null;
   function showEngine(ts) {
     if (ts - lastEngine < 0.5) return;
     lastEngine = ts;
     const [r, g, b] = rgbNow.map(Math.round);
     text("engine", `Mode: ${mode}${frameFmt ? " (" + frameFmt + ")" : ""}, ${frameMs.toFixed(1)} ms per frame, ` +
-                   `R ${r} G ${g} B ${b}` + (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
+                   `R ${r} G ${g} B ${b}` + (lagMs !== null ? `, lag ${Math.round(lagMs)} ms` : "") + (lockInfo ? `. ${lockInfo[0].toUpperCase()}${lockInfo.slice(1)}` : ""));
   }
 
   // ----- Recording: only store the averaged colour of every frame -----
@@ -676,29 +693,21 @@ if (typeof document !== "undefined") (() => {
     lastT = t;
     rec.t.push(t); rec.r.push(r); rec.g.push(g); rec.b.push(b);
     if (finger) rec.finger++;
-    swatchDirty = true;
     if (t >= duration) stop(true);
   }
 
-  // The circle shows the brightness of the finger, stretched to the range of the last
-  // 2 seconds, so the small changes caused by the pulse become visible. Updated at most
-  // once per screen refresh.
-  function swatchLoop() {
-    if (swatchDirty && state === "recording") {
-      swatchDirty = false;
-      const n = rec.t.length, tNow = rec.t[n - 1];
-      let lo = Infinity, hi = -Infinity;
-      for (let i = n - 1; i >= 0 && rec.t[i] > tNow - 2; i--) { lo = Math.min(lo, rec.r[i]); hi = Math.max(hi, rec.r[i]); }
-      // more blood = darker image; the circle gets brighter with every beat
-      const level = hi - lo > 0.05 ? (hi - rec.r[n - 1]) / (hi - lo) : 0.5;
-      $("swatch").style.background = `hsl(0, 85%, ${Math.round(22 + 38 * level)}%)`;
-      const left = Math.max(0, Math.ceil(duration - tNow));
-      text("count", left); text("countLabel", "s left");
-      $("bar").style.width = (100 * Math.min(1, tNow / duration)).toFixed(1) + "%";
-      if (rec.t.length > 20 && rgbNow[0] <= 60) setStatus("Finger lost – put it back on the camera", "bad");
+  // Countdown and progress ring, updated at most 10 times per second
+  let lastUiUpdate = 0;
+  function uiLoop(now) {
+    if (state === "recording" && rec.t.length && now - lastUiUpdate > 100) {
+      lastUiUpdate = now;
+      const tNow = rec.t[rec.t.length - 1];
+      text("count", Math.max(0, Math.ceil(duration - tNow))); text("countLabel", "s left");
+      $("ring").style.strokeDashoffset = (552.9 * (1 - Math.min(1, tNow / duration))).toFixed(1);
+      if (rgbNow[0] <= 60) setStatus("Finger lost – put it back on the camera", "bad");
       else setStatus("Recording – keep still", "ok");
     }
-    requestAnimationFrame(swatchLoop);
+    requestAnimationFrame(uiLoop);
   }
 
   // ----- Evaluation after the recording -----
@@ -898,7 +907,7 @@ if (typeof document !== "undefined") (() => {
     state = "preview"; clock = null; fingerSince = null; lastMediaTime = -1;
     camLock = {}; lockState = "none"; lockedAt = null; lockInfo = ""; lastEngine = -Infinity;
     text("startBtn", "Stop"); text("count", duration); text("countLabel", "s");
-    $("bar").style.width = "0%"; $("swatch").style.background = "";
+    $("ring").style.strokeDashoffset = "552.9"; lagMs = null;
     setStatus("Cover the camera and flash with your fingertip", "bad");
     try { wakeLock = await navigator.wakeLock?.request("screen"); } catch (e) { /* optional */ }
     startCapture();
@@ -914,10 +923,9 @@ if (typeof document !== "undefined") (() => {
     $("torchBtn").disabled = true;
     try { await wakeLock?.release(); } catch (e) { /* ignore */ }
     text("startBtn", "Start");
-    $("swatch").style.background = "";
     const dur = recorded && rec.t.length ? rec.t[rec.t.length - 1] : 0;
     if (dur < 10) {
-      text("count", "--"); text("countLabel", "ready");
+      text("count", ""); text("countLabel", "");
       setStatus(recorded ? "Recording too short (at least 10 s) – try again" : "Stopped", recorded ? "bad" : "");
       return;
     }
@@ -962,7 +970,7 @@ if (typeof document !== "undefined") (() => {
   document.addEventListener("visibilitychange", () => { if (document.hidden && state !== "idle") stop(false); });
   window.addEventListener("resize", resizePlots);
   window.matchMedia("(prefers-color-scheme: dark)").addEventListener?.("change", () => { readColors(); resizePlots(); });
-  readColors(); swatchLoop();
+  readColors(); requestAnimationFrame(uiLoop);
 })();
 
 if (typeof module !== "undefined") module.exports = { PulseProcessor };

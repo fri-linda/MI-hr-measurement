@@ -169,10 +169,12 @@
 
 /* ===== Signal processing (no browser APIs, testable on its own) ===== */
 class PulseProcessor {
-  constructor() { this.reset(); }
+  // channel: which colour carries the pulse wave ("r", "g" or "b"). With the flash on,
+  // red is often saturated (stuck at 255) on many phones and green has the better signal.
+  constructor(channel = "r") { this.channel = channel; this.reset(); }
 
   reset() {
-    this.t = []; this.r = []; this.g = []; this.b = [];
+    this.t = []; this.r = []; this.g = []; this.b = []; this.v = [];
     this.finger = []; this.sig = []; this.rawInv = [];
     this.beats = [];          // {t, rr, bpm, valid}
     this.lastChecked = -1;
@@ -193,13 +195,14 @@ class PulseProcessor {
   // Add one camera frame. Returns a beat object if a new beat was confirmed.
   add(t, r, g, b) {
     const finger = r > 60 && r > 1.6 * g && r > 1.6 * b;
-    this.t.push(t); this.r.push(r); this.g.push(g); this.b.push(b);
+    const v = this.channel === "g" ? g : this.channel === "b" ? b : r;
+    this.t.push(t); this.r.push(r); this.g.push(g); this.b.push(b); this.v.push(v);
     this.finger.push(finger ? 1 : 0);
 
     const n = this.t.length;
     // 1) Remove slow drift: subtract the mean of the last 2 s (causal high-pass)
     const i0 = this.idxAt(t - 2.0);
-    const detr = r - this.mean(this.r, i0, n);
+    const detr = v - this.mean(this.v, i0, n);
     // 2) Blood absorbs light: a heartbeat makes the image darker, so invert
     this.rawInv.push(-detr);
     // 3) Light smoothing over ~0.12 s
@@ -463,7 +466,7 @@ if (typeof document !== "undefined") (() => {
   }
 
   const SETTLE = 2;              // seconds of steady finger contact before recording starts
-  const proc = new PulseProcessor();
+  let proc = new PulseProcessor();
   let stream = null, track = null, torchOn = false, wakeLock = null, recordedAt = null;
   let state = "idle";            // idle -> preview (waiting for the finger) -> recording -> idle
   let clock = null, base = 0, lastT = -1, fingerSince = null, lastMediaTime = -1;
@@ -712,16 +715,33 @@ if (typeof document !== "undefined") (() => {
 
   // ----- Evaluation after the recording -----
 
+  // The recording is evaluated separately for the red, green and blue channel and the one
+  // with the most regular pulse wins. Native apps (e.g. phyphox) set the camera so that the
+  // image is not over-exposed; a web page usually cannot, so with the flash red is often
+  // saturated at 255 and carries no pulse at all.
+  const CHANNEL_NAME = { r: "red", g: "green", b: "blue" };
   function analyze() {
-    proc.reset();
-    for (let i = 0; i < rec.t.length; i++) proc.add(rec.t[i], rec.r[i], rec.g[i], rec.b[i]);
+    let best = null;
+    for (const ch of ["r", "g", "b"]) {
+      const vals = rec[ch], n = vals.length;
+      const saturated = vals.filter(x => x >= 250).length / n, mean = vals.reduce((p, q) => p + q, 0) / n;
+      if (saturated > 0.5 || mean < 3) continue;        // clipped or almost black: no pulse in it
+      const p = new PulseProcessor(ch);
+      for (let i = 0; i < n; i++) p.add(rec.t[i], rec.r[i], rec.g[i], rec.b[i]);
+      const valid = p.beats.filter(x => x.valid).length;
+      const score = valid * (p.beats.length ? valid / p.beats.length : 0);
+      if (!best || score > best.score) best = { ch, p, score };
+    }
+    if (!best) { best = { ch: "r", p: new PulseProcessor("r") }; for (let i = 0; i < rec.t.length; i++) best.p.add(rec.t[i], rec.r[i], rec.g[i], rec.b[i]); }
+    proc = best.p;
     const s = proc.summary();
     const valid = proc.beats.filter(x => x.valid);
     const dur = rec.t[rec.t.length - 1] || 0;
     const fps = rec.t.length / Math.max(dur, 1e-9);
     const fingerShare = rec.finger / Math.max(1, rec.t.length);
     const accepted = proc.beats.length ? valid.length / proc.beats.length : 0;
-    result = { s, valid, dur, fps, fingerShare, accepted };
+    const redClipped = rec.r.filter(x => x >= 250).length / Math.max(1, rec.r.length);
+    result = { s, valid, dur, fps, fingerShare, accepted, channel: best.ch, redClipped };
 
     $("results").hidden = false;
     text("bpm", s ? Math.round(s.meanBpm) : "--");
@@ -733,7 +753,9 @@ if (typeof document !== "undefined") (() => {
     text("sSdnn", s ? Math.round(s.sdnn) : "--");
     text("sRmssd", s ? Math.round(s.rmssd) : "--");
     let q = `Finger on the camera ${Math.round(100 * fingerShare)} % of the time, ` +
-            `${Math.round(100 * accepted)} % of detected beats accepted.`;
+            `${Math.round(100 * accepted)} % of detected beats accepted, pulse taken from the ` +
+            `${CHANNEL_NAME[best.ch]} channel` +
+            (redClipped > 0.2 ? ` (red was over-exposed ${Math.round(100 * redClipped)} % of the time).` : ".");
     if (!s) q += " Not enough clean beats for a result – try again and keep still.";
     else if (accepted < 0.7 || fingerShare < 0.9) q += " The signal was noisy, treat the result with caution.";
     text("quality", q);

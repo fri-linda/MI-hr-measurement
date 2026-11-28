@@ -49,6 +49,16 @@
   .note { font-size: .8rem; color: var(--muted); }
   .err { color: var(--accent); font-size: .9rem; margin: 10px 0 0; }
   details.card summary { font-weight: 600; cursor: pointer; }
+  .fmtpick { display: flex; gap: 6px; margin: 8px 0; }
+  .fmtpick button { padding: 7px 11px; font-size: .85rem; }
+  .fmtpick button.on { background: var(--accent-soft); border-color: var(--accent); }
+  .tcode { font-family: ui-monospace, Consolas, monospace; font-size: 1.7rem; font-weight: 700; letter-spacing: .06em;
+           text-align: center; padding: 10px; border: 2px dashed var(--line); border-radius: 12px; margin: 6px 0; }
+  .sendrow { display: flex; gap: 8px; flex-wrap: wrap; margin: 10px 0 4px; }
+  .sendrow button { flex: 1 1 auto; }
+  input.pid { font: inherit; border-radius: 10px; border: 1px solid var(--line); background: var(--card);
+              color: var(--text); padding: 8px 10px; width: 11em; }
+  #qr { display: block; margin: 10px auto 4px; image-rendering: pixelated; background: #fff; border-radius: 8px; }
   .how { font-size: .9rem; line-height: 1.5; }
   .how h3 { font-size: .92rem; margin: 14px 0 4px; }
   .how p { margin: 0 0 6px; }
@@ -119,6 +129,30 @@
     <button id="copyBtn">Copy</button>
   </div>
 
+  <div class="card" id="send" hidden>
+    <h2>Send to the hospital system</h2>
+    <label>Patient ID (a nickname, not your real name)
+      <input class="pid" id="patientId" maxlength="20" autocomplete="off" spellcheck="false"></label>
+    <div class="fmtpick" id="sendFmt">
+      <button data-f="fhir" class="on">as FHIR</button>
+      <button data-f="hl7">as HL7 v2</button>
+    </div>
+    <div class="plotlabel">Transfer code: on a computer open the hospital system and type it there,
+      together with the patient ID</div>
+    <div class="tcode" id="tcode"></div>
+    <div class="sendrow">
+      <button id="openNis">Open the hospital system here</button>
+      <button id="shareBtn">Share link</button>
+      <button id="qrBtn">Show QR code</button>
+    </div>
+    <canvas id="qr" hidden></canvas>
+    <p class="note" id="qrNote" hidden style="text-align:center; margin:0">Scan with the camera app of another phone:
+      the hospital system opens there with this measurement.</p>
+    <p class="note" style="margin:8px 0 0">Hospital system: <a id="nisLink" href="nis.html">nis.html</a> on this site.
+      Nothing is uploaded: the link carries the message after <b>#</b>, which browsers never send to a server,
+      and the code is typed by hand.</p>
+  </div>
+
   <details class="card" id="how">
     <summary>How the evaluation works</summary>
     <div class="how">
@@ -174,6 +208,8 @@
   <p class="note">For teaching purposes only (Medical Informatics, FRI UNIZA). Not a medical device.</p>
 </main>
 
+<script src="messages.js"></script>
+<script src="vendor/qrcode.js"></script>
 <script>
 "use strict";
 
@@ -436,7 +472,7 @@ if (typeof document !== "undefined") (() => {
   async function evaluateVideo(file) {
     state = "evaluating"; evalCancel = false;
     showError(""); text("analyzeBtn", "Cancel");
-    $("results").hidden = $("messages").hidden = true;
+    $("results").hidden = $("messages").hidden = $("send").hidden = true;
     recordedAt = new Date(file.lastModified || Date.now());
     setStatus("Looking for the finger in the video…", "warn");
     let out;
@@ -507,7 +543,7 @@ if (typeof document !== "undefined") (() => {
     text("quality", q);
     resizePlots();
     drawAll(); drawRate(); drawRaw();
-    if (s) { $("messages").hidden = false; showMessage(currentFmt); }
+    if (s) { $("messages").hidden = false; $("send").hidden = false; showMessage(currentFmt); updateSend(); }
   }
 
   function setupCanvas(c) {
@@ -583,12 +619,21 @@ if (typeof document !== "undefined") (() => {
   // ----- The result as messages in different standards -----
 
   const pad2 = x => String(x).padStart(2, "0");
-  function isoLocal(d) {
-    const off = -d.getTimezoneOffset(), sign = off >= 0 ? "+" : "-";
-    return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(d.getHours())}:` +
-           `${pad2(d.getMinutes())}:${pad2(d.getSeconds())}${sign}${pad2(Math.floor(Math.abs(off) / 60))}:${pad2(Math.abs(off) % 60)}`;
+
+  // The measurement in the form shared with the hospital system (messages.js)
+  function measurement() {
+    const dur = Math.min(31, Math.round(result.dur));
+    const m = { patient: patientId(), bpm: Math.round(result.s.meanBpm), sdnn: Math.round(result.s.sdnn),
+                start: recordedAt.getTime() - dur * 1000, dur, tz: -recordedAt.getTimezoneOffset() };
+    m.start = Math.floor(m.start / 60000) * 60000;      // the transfer code keeps whole minutes
+    m.code = MI.encodeCode(m);
+    m.id = MI.idFromCode(m.code);
+    return m;
   }
-  const hl7Time = d => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  function patientId() {
+    const v = $("patientId").value.trim();
+    return v || "patient";
+  }
   const hex = n => n.toString(16).toUpperCase().padStart(2, "0");
 
   function bleMessage() {
@@ -614,43 +659,17 @@ if (typeof document !== "undefined") (() => {
   }
 
   function fhirMessage() {
-    const s = result.s, start = recordedAt, end = new Date(recordedAt.getTime() + result.dur * 1000);
-    const obs = {
-      resourceType: "Observation",
-      status: "final",
-      category: [{ coding: [{ system: "http://terminology.hl7.org/CodeSystem/observation-category",
-                              code: "vital-signs", display: "Vital Signs" }] }],
-      code: { coding: [{ system: "http://loinc.org", code: "8867-4", display: "Heart rate" }] },
-      subject: { reference: "Patient/example", display: "Test Student" },
-      effectivePeriod: { start: isoLocal(start), end: isoLocal(end) },
-      valueQuantity: { value: Math.round(s.meanBpm), unit: "beats/minute",
-                       system: "http://unitsofmeasure.org", code: "/min" },
-      device: { display: "Camera Pulse (phone camera, PPG)" },
-      component: [{
-        code: { coding: [{ system: "http://loinc.org", code: "80404-7",
-                           display: "R-R interval.standard deviation (Heart rate variability)" }] },
-        valueQuantity: { value: Math.round(s.sdnn), unit: "ms", system: "http://unitsofmeasure.org", code: "ms" }
-      }]
-    };
-    return { text: JSON.stringify(obs, null, 2),
+    return { text: MI.buildFHIR(measurement(), true),
              note: "FHIR R4 resource Observation in JSON. The value has a unit from UCUM and a LOINC code, so " +
                    "any FHIR server understands it. Send it with POST to [server]/Observation." };
   }
 
   function hl7Message() {
-    const s = result.s, now = new Date(), id = "MSG" + hl7Time(now);
-    const t = hl7Time(recordedAt);
-    const seg = [
-      `MSH|^~\\&|CAMERAPULSE|FRI_UNIZA|NIS|NEMOCNICA|${hl7Time(now)}||ORU^R01^ORU_R01|${id}|P|2.5.1`,
-      `PID|1||123456^^^NEMOCNICA^MR||Student^Test||20000101|U`,
-      `OBR|1||${id}|8867-4^Heart rate^LN|||${t}`,
-      `OBX|1|NM|8867-4^Heart rate^LN||${Math.round(s.meanBpm)}|/min^beats per minute^UCUM|60-100|${s.meanBpm > 100 || s.meanBpm < 60 ? "A" : "N"}|||F|||${t}`,
-      `OBX|2|NM|80404-7^R-R interval.standard deviation^LN||${Math.round(s.sdnn)}|ms^millisecond^UCUM||||F|||${t}`,
-    ];
-    return { text: seg.join("\n"),
+    const m = measurement();
+    return { text: MI.buildHL7(m).replace(/\r/g, "\n"),
              note: "HL7 v2.5.1 message ORU^R01 (observation result). Segments are separated by carriage " +
                    "returns, fields by |, components by ^. The receiver answers with an ACK message " +
-                   `(MSA|AA|${id} = accepted).` };
+                   `(MSA|AA|${m.id} = accepted).` };
   }
 
   let currentFmt = "ble", currentText = "";
@@ -662,6 +681,53 @@ if (typeof document !== "undefined") (() => {
     $("msgText").textContent = m.text;
     text("msgNote", m.note);
   }
+
+  // ----- Sending to the hospital system -----
+  let sendFmt = "fhir", link = "";
+  async function updateSend() {
+    if (!result || !result.s) return;
+    const m = measurement();
+    text("tcode", m.code);
+    link = await MI.encodeLink(sendFmt === "fhir" ? MI.buildFHIR(m) : MI.buildHL7(m), location.href);
+    if (!$("qr").hidden) drawQR();
+    if (currentFmt !== "ble") showMessage(currentFmt);
+  }
+  function drawQR() {
+    const q = qrcode(0, "L");
+    q.addData(link, "Byte"); q.make();
+    const n = q.getModuleCount(), quiet = 4, size = Math.min(300, $("send").clientWidth - 30);
+    const cell = Math.max(2, Math.floor(size / (n + 2 * quiet))), c = $("qr");
+    c.width = c.height = cell * (n + 2 * quiet);
+    const ctx = c.getContext("2d");
+    ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); ctx.fillStyle = "#000";
+    for (let r = 0; r < n; r++) for (let k = 0; k < n; k++)
+      if (q.isDark(r, k)) ctx.fillRect((k + quiet) * cell, (r + quiet) * cell, cell, cell);
+  }
+  $("patientId").value = localStorage.getItem("cp-patient") ||
+                         ("patient-" + String(Math.floor(Math.random() * 900) + 100));
+  $("patientId").oninput = () => { localStorage.setItem("cp-patient", $("patientId").value.trim()); updateSend(); };
+  document.querySelectorAll("#sendFmt button").forEach(b => b.onclick = () => {
+    sendFmt = b.dataset.f;
+    document.querySelectorAll("#sendFmt button").forEach(x => x.classList.toggle("on", x === b));
+    updateSend();
+  });
+  $("openNis").onclick = () => window.open(link, "_blank");
+  $("shareBtn").onclick = async () => {
+    if (navigator.share) {
+      try { await navigator.share({ title: "Heart rate measurement", text: "Open in the hospital system (NIS)", url: link }); }
+      catch (e) { /* the user closed the share sheet */ }
+      return;
+    }
+    try { await navigator.clipboard.writeText(link); text("shareBtn", "Link copied"); }
+    catch (e) { text("shareBtn", "Copy failed"); }
+    setTimeout(() => text("shareBtn", "Share link"), 1500);
+  };
+  $("qrBtn").onclick = () => {
+    const show = $("qr").hidden;
+    $("qr").hidden = $("qrNote").hidden = !show;
+    text("qrBtn", show ? "Hide QR code" : "Show QR code");
+    if (show) drawQR();
+  };
 
   $("analyzeBtn").onclick = () => {
     if (state === "evaluating") evalCancel = true;

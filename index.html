@@ -812,10 +812,14 @@ if (typeof document !== "undefined") (() => {
     recTimer = setTimeout(() => stop(true), duration * 1000 + 300);
   }
 
-  // Plays the video and reads every frame (its own timestamp, mean colour of the centre).
-  // If the browser skips frames during playback, it is played again more slowly.
+  // Plays the video and reads its frames (own timestamp, mean colour of the centre).
+  // Skipped frames do not matter, every frame read has its exact time in the video. Only if
+  // fewer than 15 frames per second could be read, the video is played again more slowly.
+  // The canvas stays on the GPU: it shrinks the (often full HD) frame, only 32x24 pixels
+  // are read back.
   const vgrab = document.createElement("canvas"); vgrab.width = 32; vgrab.height = 24;
-  const vctx = vgrab.getContext("2d", { alpha: false, willReadFrequently: true });
+  const vctx = vgrab.getContext("2d", { alpha: false });
+  let evalCancel = false;
   async function readVideo(blob, fromFile, rate = 1) {
     const v = document.createElement("video");
     v.muted = true; v.playsInline = true; v.preload = "auto";
@@ -834,6 +838,7 @@ if (typeof document !== "undefined") (() => {
         const finish = () => { if (!done) { done = true; v.pause(); resolve(); } };
         const onFrame = (now, md) => {
           if (done) return;
+          if (evalCancel) { finish(); return; }
           if (lastPresented !== null && md.presentedFrames > lastPresented + 1) out.dropped += md.presentedFrames - lastPresented - 1;
           lastPresented = md.presentedFrames;
           const w = v.videoWidth, h = v.videoHeight;
@@ -861,7 +866,9 @@ if (typeof document !== "undefined") (() => {
           if (now - lastStatus > 250) {
             lastStatus = now;
             const pct = Math.min(99, Math.round(100 * (start === null ? 0 : (ts - start)) / maxDur));
-            setStatus(start === null ? "Looking for the finger in the video…" : `Evaluating the video… ${pct} %`, "warn");
+            const pass = rate < 1 ? ` (slower pass, ${rate}x)` : "";
+            setStatus(start === null ? "Looking for the finger in the video…" + pass
+                                     : `Evaluating the video… ${pct} %${pass}`, "warn");
           }
           v.requestVideoFrameCallback(onFrame);
         };
@@ -870,7 +877,8 @@ if (typeof document !== "undefined") (() => {
         v.playbackRate = rate;
         v.play().catch(reject);
       });
-      if (out.dropped > 0.05 * (out.frames + out.dropped) && rate > 0.25) {
+      const span = out.t.length ? out.t[out.t.length - 1] : 0;
+      if (!evalCancel && span > 0 && out.frames / span < 15 && rate > 0.25) {
         v.remove(); URL.revokeObjectURL(url);
         return readVideo(blob, fromFile, rate / 2);
       }
@@ -881,13 +889,15 @@ if (typeof document !== "undefined") (() => {
   }
 
   async function evaluateVideo(blob, fromFile) {
-    state = "evaluating";
+    state = "evaluating"; evalCancel = false;
+    text("startBtn", "Cancel");
     text("count", "…"); text("countLabel", "evaluating");
     setStatus("Evaluating the video…", "warn");
     let out;
     try { out = await readVideo(blob, fromFile); }
-    catch (e) { state = "idle"; showError("Could not read the video: " + e.message); setStatus("Evaluation failed", "bad"); return; }
-    state = "idle";
+    catch (e) { state = "idle"; text("startBtn", "Start"); showError("Could not read the video: " + e.message); setStatus("Evaluation failed", "bad"); return; }
+    state = "idle"; text("startBtn", "Start");
+    if (evalCancel) { text("count", ""); text("countLabel", ""); setStatus("Evaluation cancelled", ""); return; }
     rec = out;
     const dur = rec.t.length ? rec.t[rec.t.length - 1] : 0;
     if (dur < 10) {
@@ -1156,7 +1166,11 @@ if (typeof document !== "undefined") (() => {
     return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
   }
 
-  $("startBtn").onclick = () => state === "idle" ? start() : stop(false);
+  $("startBtn").onclick = () => {
+    if (state === "evaluating") evalCancel = true;
+    else if (state === "idle") start();
+    else stop(false);
+  };
   $("videoBtn").onclick = () => { if (state === "idle") $("videoFile").click(); };
   $("videoFile").onchange = async () => {
     const file = $("videoFile").files[0]; $("videoFile").value = "";

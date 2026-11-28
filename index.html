@@ -96,6 +96,13 @@
       <div class="stat"><b id="sSdnn">--</b><span>SDNN (ms)</span></div>
       <div class="stat"><b id="sRmssd">--</b><span>RMSSD (ms)</span></div>
     </div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:12px">
+      <button id="dlSignal">Download signal CSV</button>
+      <button id="dlBeats">Download beats CSV</button>
+    </div>
+    <p class="note" style="margin:6px 0 0">Signal CSV: every frame used (time in s, mean red, green and blue,
+      finger detected, filtered pulse wave). Beats CSV: time of every detected beat, interval to the previous
+      beat (RR in ms), BPM and whether the beat was accepted.</p>
   </div>
 
   <div class="card" id="messages" hidden>
@@ -665,6 +672,18 @@ if (typeof document !== "undefined") (() => {
     if (file) evaluateVideo(file);
   };
   document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => showMessage(b.dataset.fmt));
+  function download(name, csv) {
+    const url = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+    const a = document.createElement("a");
+    a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+  function stamp() {
+    const d = recordedAt;
+    return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}`;
+  }
+  $("dlSignal").onclick = () => download(`ppg-signal-${stamp()}.csv`, proc.signalCSV());
+  $("dlBeats").onclick = () => download(`ppg-beats-${stamp()}.csv`, proc.beatsCSV());
   $("copyBtn").onclick = async () => {
     try { await navigator.clipboard.writeText(currentText); text("copyBtn", "Copied"); }
     catch (e) { text("copyBtn", "Copy failed"); }
